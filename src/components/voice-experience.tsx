@@ -42,7 +42,7 @@ function fromBase64(value: string) {
 function statusLabel(status: Status) {
   const labels: Record<Status, string> = {
     idle: "Tap the orb, speak your craving, get one clean decision.",
-    connecting: "Opening a secure voice session...",
+    connecting: "Requesting location and microphone permission...",
     listening: "Listening to your craving...",
     speaking: "DecideEats is thinking out loud...",
     error: "Voice needs attention",
@@ -319,6 +319,9 @@ export function VoiceExperience() {
     setAgentText("");
     setStatus("connecting");
     try {
+      if (!locationRef.current) {
+        await withLocationTimeout(requestLocation(), () => setLocationStatus("fallback"), 3500);
+      }
       const response = await fetch("/api/voice-token", { cache: "no-store" });
       const payload = (await response.json()) as { token?: string; error?: string };
       if (!response.ok || !payload.token) throw new Error(payload.error ?? "Unable to create a voice session.");
@@ -405,7 +408,7 @@ export function VoiceExperience() {
       stream.current?.getTracks().forEach((track) => track.stop());
       void context.current?.close();
     }
-  }, [clearPlayback, flushToolResults, play, runRecommendationTool]);
+  }, [clearPlayback, flushToolResults, play, requestLocation, runRecommendationTool]);
 
   useEffect(() => () => stop(), [stop]);
   useEffect(() => {
@@ -536,7 +539,13 @@ export function VoiceExperience() {
             </div>
 
             <p className="location-line">
-              {locationStatus === "ready" ? "Using your browser location." : locationStatus === "asking" ? "Getting your location..." : locationStatus === "fallback" ? "Search area ready: Tun Aminah." : "Live search ready."}
+              {locationStatus === "ready"
+                ? "Using your browser location."
+                : locationStatus === "asking"
+                  ? "Please allow location permission for nearby picks."
+                  : locationStatus === "fallback"
+                    ? "Location permission was not available. Use Area or voice location instead."
+                    : "Live search ready."}
             </p>
 
             <div className="results-stack">

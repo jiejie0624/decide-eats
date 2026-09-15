@@ -200,7 +200,7 @@ export function VoiceExperience() {
     setIsSearching(true);
     try {
       const areaText = area.trim();
-      const latestLocation = location ?? (areaText ? null : await withLocationTimeout(requestLocation(), () => setLocationStatus("fallback")));
+      const latestLocation = areaText ? null : location ?? (await withLocationTimeout(requestLocation(), () => setLocationStatus("fallback")));
       const response = await fetch("/api/recommendation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -423,7 +423,17 @@ export function VoiceExperience() {
 
   const voiceActive = status === "connecting" || status === "listening" || status === "speaking";
   const orbClass = `mic-elevation ${voiceActive ? "mic-elevation-active" : ""} ${status === "listening" ? "mic-elevation-listening" : ""} ${status === "speaking" ? "mic-elevation-speaking" : ""}`;
-  const routeOrigin = location ? `${location.latitude},${location.longitude}` : area.trim() || areaUsed || undefined;
+  const typedArea = area.trim();
+  const routeOrigin = typedArea || (location ? `${location.latitude},${location.longitude}` : areaUsed || undefined);
+  const locationMessage = typedArea
+    ? `Using typed area: ${typedArea}.`
+    : locationStatus === "ready"
+      ? "Using your browser location."
+      : locationStatus === "asking"
+        ? "Please allow location permission for nearby picks."
+        : locationStatus === "fallback"
+          ? "Location permission was not available. Type an Area or say your location."
+          : "Choose manual Area, browser location, or voice input.";
 
   return (
     <main className="liquid-shell">
@@ -534,19 +544,18 @@ export function VoiceExperience() {
               </label>
               <label className="area-field">
                 <span>Area</span>
-                <input value={area} onChange={(event) => setArea(event.target.value)} placeholder="Tun Aminah, KL..." />
+                <input
+                  value={area}
+                  onChange={(event) => {
+                    setArea(event.target.value);
+                    setLocationStatus("idle");
+                  }}
+                  placeholder="Miri, Kota Kinabalu, Kulai..."
+                />
               </label>
             </div>
 
-            <p className="location-line">
-              {locationStatus === "ready"
-                ? "Using your browser location."
-                : locationStatus === "asking"
-                  ? "Please allow location permission for nearby picks."
-                  : locationStatus === "fallback"
-                    ? "Location permission was not available. Use Area or voice location instead."
-                    : "Live search ready."}
-            </p>
+            <p className="location-line">{locationMessage}</p>
 
             <div className="results-stack">
               {recommendations.length === 0 ? (

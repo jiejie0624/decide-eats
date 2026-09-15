@@ -133,6 +133,11 @@ function readRequest(value: unknown): RecommendationRequest {
   };
 }
 
+function looksLikeFoodPlace(category: string, name: string) {
+  const text = `${category} ${name}`.toLowerCase();
+  return /(restaurant|food|halal|cafe|coffee|kopitiam|mamak|hawker|stall|court|kitchen|bar|grill|noodle|ramen|pizza|burger|sushi|thai|chinese|indian|mexican|nasi|lemak)/.test(text);
+}
+
 export async function POST(request: Request) {
   const limit = rateLimit(requestKey(request, "recommendation"), 40, 60_000);
   if (!limit.ok) {
@@ -196,7 +201,8 @@ export async function POST(request: Request) {
     const places = Array.isArray(payload.results)
       ? payload.results.map((place) => mapFoursquarePlace(place as FoursquarePlace, recommendationRequest))
       : [];
-    const rankedPlaces = rankRecommendations(places, recommendationRequest).slice(0, 3);
+    const foodPlaces = places.filter((place) => looksLikeFoodPlace(place.category, place.name));
+    const rankedPlaces = rankRecommendations(foodPlaces.length > 0 ? foodPlaces : places, recommendationRequest).slice(0, 3);
     const resolvedCenter = payload.context?.geo_bounds?.circle?.center;
     const resolvedAreaUsed = shouldUseNearSearch && resolvedCenter ? areaUsed : areaUsed;
 

@@ -50,9 +50,16 @@ function statusLabel(status: Status) {
   return labels[status];
 }
 
-function priceLabel(price?: number) {
-  if (!price) return "Price unknown";
-  return "$".repeat(Math.max(1, Math.min(4, price)));
+function priceLabel(place: Recommendation) {
+  if (place.priceLabel) return `${place.priceLabel}${place.priceNote?.includes("estimated") ? " estimated" : ""}`;
+  if (!place.price) return "Price estimate unavailable";
+  return "$".repeat(Math.max(1, Math.min(4, place.price)));
+}
+
+function budgetLabel(place: Recommendation) {
+  if (place.budgetFit === "good") return "Fits budget";
+  if (place.budgetFit === "stretch") return "May stretch budget";
+  return "Budget okay";
 }
 
 function directionsUrl(place: Recommendation, origin?: string) {
@@ -533,7 +540,7 @@ export function VoiceExperience() {
                       <div>
                         <p>Tonight&apos;s pick</p>
                         <h3>{decision.name}</h3>
-                        <span>{decision.category} · {priceLabel(decision.price)}</span>
+                        <span>{decision.category} · {priceLabel(decision)} · {budgetLabel(decision)}</span>
                         <small>{decision.address}</small>
                         <strong>{decision.reason}</strong>
                       </div>
@@ -554,7 +561,7 @@ export function VoiceExperience() {
                       <div>
                         <p>Pick {index + 1}</p>
                         <h3>{item.name}</h3>
-                        <span>{item.category} · {priceLabel(item.price)}</span>
+                        <span>{item.category} · {priceLabel(item)} · {budgetLabel(item)}</span>
                         <small>{item.address}</small>
                       </div>
                       <a href={directionsUrl(item, routeOrigin)} target="_blank" rel="noreferrer" className="mini-map-button" title="Open directions in Google Maps" aria-label={`Open directions to ${item.name}`}>

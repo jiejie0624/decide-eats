@@ -239,6 +239,12 @@ export function VoiceExperience() {
     const spokenArea = typeof args.area === "string" ? args.area.trim() : "";
     const currentArea = areaRef.current.trim();
     const nextArea = spokenArea || currentArea || userText.trim();
+    const nextBudget = args.budget ?? budget;
+    const nextPartySize =
+      typeof args.partySize === "number" && Number.isFinite(args.partySize)
+        ? Math.max(1, Math.min(12, Math.round(args.partySize)))
+        : partySize;
+    const nextDietary = typeof args.dietary === "string" && args.dietary.trim() ? args.dietary.trim() : dietary.trim() || undefined;
     if (spokenArea) {
       areaRef.current = spokenArea;
       setArea(spokenArea);
@@ -247,6 +253,9 @@ export function VoiceExperience() {
       setLocationStatus("idle");
     }
     if (args.query) setQuery(args.query);
+    if (args.budget) setBudget(args.budget);
+    if (typeof args.partySize === "number" && Number.isFinite(args.partySize)) setPartySize(nextPartySize);
+    if (typeof args.dietary === "string" && args.dietary.trim()) setDietary(args.dietary.trim());
     try {
       const response = await fetch("/api/recommendation", {
         method: "POST",
@@ -256,9 +265,9 @@ export function VoiceExperience() {
           latitude: args.latitude ?? (spokenArea ? undefined : latestLocation?.latitude),
           longitude: args.longitude ?? (spokenArea ? undefined : latestLocation?.longitude),
           area: nextArea,
-          budget: args.budget ?? budget,
-          partySize: args.partySize ?? partySize,
-          dietary: args.dietary ?? (dietary.trim() || undefined),
+          budget: nextBudget,
+          partySize: nextPartySize,
+          dietary: nextDietary,
           rejectedIds: args.rejectedIds ?? rejectedIdsRef.current,
         }),
       });
@@ -335,7 +344,7 @@ export function VoiceExperience() {
           ? { agent_id: storedAgentId }
           : {
               system_prompt:
-                "You are DecideEats, a concise restaurant decision assistant. Ask only for missing essentials such as cuisine, budget, party size, location, and dietary constraints. When the user says where they live, where they are, or names a city/suburb/state such as Miri, Sarawak, put that place in the get_recommendation area field exactly and treat it as the current search area unless the user later changes it. When the user gives a food preference or rejects a pick, call get_recommendation. Use the returned JSON to recommend one clear pick and explain why. Never invent restaurant facts outside the tool result.",
+                "You are DecideEats, a concise restaurant decision assistant. Ask only for missing essentials such as cuisine, budget, party size, location, and dietary constraints. When the user says where they live, where they are, or names a city/suburb/state such as Miri, Sarawak, put that place in the get_recommendation area field exactly and treat it as the current search area unless the user later changes it. When the user says how many people are eating, such as 'for 3 people', 'two of us', or '三个人吃', put the number in partySize. When the user gives a food preference or rejects a pick, call get_recommendation. Use the returned JSON to recommend one clear pick and explain why. Never invent restaurant facts outside the tool result.",
               greeting: "Hi, I'm DecideEats. Tell me what you feel like eating.",
               input: { format: { encoding: "audio/pcm" } },
               output: { voice: "alba", format: { encoding: "audio/pcm" }, volume: 100 },
@@ -352,7 +361,7 @@ export function VoiceExperience() {
                       longitude: { type: "number", description: "Optional longitude if the user explicitly supplied it." },
                       area: { type: "string", description: "City, suburb, state, or neighborhood mentioned by the user, such as Miri, Sarawak or Tun Aminah. Use this whenever the user says they live in, are from, or are currently in a place." },
                       budget: { type: "string", enum: ["low", "medium", "high"], description: "Optional rough budget." },
-                      partySize: { type: "number", description: "Optional number of people eating." },
+                      partySize: { type: "number", description: "Number of people eating. Extract this from phrases like 'for 3 people', 'two of us', 'couple', 'family of four', or Chinese phrases like '三个人吃'." },
                       dietary: { type: "string", description: "Optional dietary requirement such as halal, vegan, vegetarian, gluten free, or no pork." },
                       rejectedIds: { type: "array", items: { type: "string" }, description: "Restaurant ids the user already rejected." },
                     },

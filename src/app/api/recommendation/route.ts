@@ -44,6 +44,36 @@ const knownAreas = [
     longitude: 103.6586369,
     patterns: ["tun aminah", "dun aminah", "tun amina", "dun amina", "tuta", "taman ungku tun aminah"],
   },
+  {
+    label: "Kota Kinabalu, Sabah",
+    latitude: 5.9804,
+    longitude: 116.0735,
+    patterns: ["kota kinabalu", "kk sabah", "kinabalu"],
+  },
+  {
+    label: "Miri, Sarawak",
+    latitude: 4.3995,
+    longitude: 113.9914,
+    patterns: ["miri", "美里"],
+  },
+  {
+    label: "Kuching, Sarawak",
+    latitude: 1.5533,
+    longitude: 110.3592,
+    patterns: ["kuching", "古晋"],
+  },
+  {
+    label: "Johor Bahru, Johor",
+    latitude: 1.4927,
+    longitude: 103.7414,
+    patterns: ["johor bahru", "jb", "新山"],
+  },
+  {
+    label: "Kuala Lumpur",
+    latitude: 3.1478,
+    longitude: 101.6953,
+    patterns: ["kuala lumpur", "kl", "吉隆坡"],
+  },
 ];
 
 function isFiniteCoordinate(value: unknown, min: number, max: number): value is number {

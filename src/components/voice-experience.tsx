@@ -128,17 +128,29 @@ export function VoiceExperience() {
   const outputs = useRef<AudioBufferSourceNode[]>([]);
   const locationRef = useRef<{ latitude: number; longitude: number } | null>(null);
   const areaRef = useRef("");
+  const userSpeakingRef = useRef(false);
+  const conversationEpochRef = useRef(0);
+  const activeReplyEpochRef = useRef(-1);
   const pendingToolResults = useRef<Array<{ call_id: string; result: RecommendationResponse | { error: string } }>>([]);
   const rejectedIdsRef = useRef<string[]>([]);
 
   const clearPlayback = useCallback(() => {
-    outputs.current.forEach((item) => item.stop());
+    outputs.current.forEach((item) => {
+      try {
+        item.stop();
+      } catch {
+        // The audio node may already have ended.
+      }
+    });
     outputs.current = [];
     if (context.current) playbackTime.current = context.current.currentTime;
   }, []);
 
   const stop = useCallback(() => {
     ready.current = false;
+    userSpeakingRef.current = false;
+    activeReplyEpochRef.current = -1;
+    conversationEpochRef.current += 1;
     if (ws.current?.readyState === WebSocket.OPEN) ws.current.send(JSON.stringify({ type: "session.end" }));
     ws.current?.close();
     ws.current = null;
@@ -154,7 +166,7 @@ export function VoiceExperience() {
 
   const play = useCallback((encoded: string) => {
     const audio = context.current;
-    if (!audio) return;
+    if (!audio || userSpeakingRef.current || activeReplyEpochRef.current !== conversationEpochRef.current) return;
     const pcm = fromBase64(encoded);
     const buffer = audio.createBuffer(1, pcm.length, 24000);
     const channel = buffer.getChannelData(0);
@@ -163,6 +175,7 @@ export function VoiceExperience() {
     source.buffer = buffer;
     source.connect(audio.destination);
     const startAt = Math.max(audio.currentTime, playbackTime.current);
+    if (userSpeakingRef.current || activeReplyEpochRef.current !== conversationEpochRef.current) return;
     source.start(startAt);
     playbackTime.current = startAt + buffer.duration;
     outputs.current.push(source);
@@ -318,6 +331,9 @@ export function VoiceExperience() {
     setUserText("");
     setAgentText("");
     setStatus("connecting");
+    userSpeakingRef.current = false;
+    activeReplyEpochRef.current = -1;
+    conversationEpochRef.current += 1;
     try {
       if (!locationRef.current) {
         await withLocationTimeout(requestLocation(), () => setLocationStatus("fallback"), 3500);
@@ -347,7 +363,7 @@ export function VoiceExperience() {
           ? { agent_id: storedAgentId }
           : {
               system_prompt:
-                "You are DecideEats, a concise restaurant decision assistant. Ask only for missing essentials such as cuisine, budget, party size, location, and dietary constraints. When the user says where they live, where they are, or names a city/suburb/state such as Miri, Sarawak, put that place in the get_recommendation area field exactly and treat it as the current search area unless the user later changes it. When the user says how many people are eating, such as 'for 3 people', 'two of us', or '三个人吃', put the number in partySize. When the user gives a food preference or rejects a pick, call get_recommendation. Use the returned JSON to recommend one clear pick and explain why. Never invent restaurant facts outside the tool result.",
+                "You are DecideEats, a concise restaurant decision assistant. Keep spoken replies short so the user can interrupt naturally. Ask only one missing essential at a time, such as cuisine, budget, party size, location, or dietary constraints. When the user says where they live, where they are, or names a city/suburb/state such as Miri, Sarawak, put that place in the get_recommendation area field exactly and treat it as the current search area unless the user later changes it. When the user says how many people are eating, such as 'for 3 people', 'two of us', or '三个人吃', put the number in partySize. When the user gives a food preference or rejects a pick, call get_recommendation. Use the returned JSON to recommend one clear pick and explain why in one or two sentences. Never invent restaurant facts outside the tool result.",
               greeting: "Hi, I'm DecideEats. Tell me what you feel like eating.",
               input: { format: { encoding: "audio/pcm" } },
               output: { voice: "alba", format: { encoding: "audio/pcm" }, volume: 100 },
@@ -381,11 +397,24 @@ export function VoiceExperience() {
           ready.current = true;
           setStatus("listening");
         } else if (message.type === "input.speech.started") {
+          userSpeakingRef.current = true;
+          conversationEpochRef.current += 1;
+          activeReplyEpochRef.current = -1;
           clearPlayback();
           setStatus("listening");
-        } else if (message.type === "reply.started") setStatus("speaking");
-        else if (message.type === "reply.audio" && message.data) play(message.data);
+        } else if (message.type === "input.speech.ended") {
+          userSpeakingRef.current = false;
+          setStatus("listening");
+        } else if (message.type === "reply.started") {
+          if (!userSpeakingRef.current) {
+            activeReplyEpochRef.current = conversationEpochRef.current;
+            setStatus("speaking");
+          }
+        } else if (message.type === "reply.audio" && message.data) {
+          if (!userSpeakingRef.current) play(message.data);
+        }
         else if (message.type === "transcript.user" && message.text) {
+          userSpeakingRef.current = false;
           setUserText(message.text);
           setQuery(message.text);
         } else if (message.type === "transcript.agent" && message.text) setAgentText(message.text);

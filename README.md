@@ -1,36 +1,70 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# DecideEats
 
-## Getting Started
+Voice-first restaurant decision agent for the AssemblyAI Voice Agent Hackathon.
 
-First, run the development server:
+## Current status
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+Implemented:
+
+- Browser microphone capture with AssemblyAI temporary-token authentication.
+- Direct AssemblyAI Voice Agent WebSocket connection.
+- Live transcript display and PCM audio playback.
+- Interruption cleanup when the user speaks or stops the session.
+- Restaurant recommendation panel with browser geolocation.
+- Server-only `/api/recommendation` endpoint for Foursquare Places API.
+- Marked demo fallback when Foursquare is not configured or unavailable.
+- AssemblyAI `get_recommendation` function tool registration.
+- Client-side `tool.call` handling that calls `/api/recommendation` and sends `tool.result` after `reply.done`.
+- Temporary client preference state for budget, party size, dietary notes, and rejected restaurant IDs.
+- One highlighted final pick with a skip action that excludes the rejected restaurant from the next result.
+- Lightweight per-IP rate limiting for voice-token and recommendation endpoints.
+- Hackathon submission draft in the project outputs folder.
+
+Still pending:
+
+- Production deployment from your hosting account.
+
+## Run locally
+
+1. Copy `.env.example` to `.env.local`.
+2. Set `ASSEMBLYAI_API_KEY` to a valid AssemblyAI API key. Do not expose it with a `NEXT_PUBLIC_` prefix.
+3. Optional: set `FOURSQUARE_API_KEY` for live nearby restaurant results. Without it, the app returns clearly marked demo results.
+4. Run `npm run dev`.
+5. Open `http://localhost:3000`, click the voice button, allow microphone access, then speak.
+
+The app works without `NEXT_PUBLIC_ASSEMBLYAI_AGENT_ID` by using an inline hackathon prompt. A stored agent ID is optional and replaces the inline configuration.
+
+## Architecture
+
+```text
+Browser microphone -> AudioWorklet resamples to PCM16 / 24 kHz
+                   -> AssemblyAI Voice Agent WebSocket
+Browser <- temporary token <- Next.js /api/voice-token <- AssemblyAI key
+
+Browser recommendation panel -> Next.js /api/recommendation
+                              -> Foursquare Places API when configured
+                              -> marked demo fallback otherwise
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Permanent API keys are read only by server routes. The browser receives a short-lived AssemblyAI token and never receives third-party provider secrets.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Verification
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Run:
 
-## Learn More
+```bash
+npm run lint
+npm run build
+```
 
-To learn more about Next.js, take a look at the following resources:
+Current local verification passes, including an AssemblyAI `session.ready` smoke test with the recommendation tool schema registered and a live Foursquare rejection-exclusion smoke test.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Deployment
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Deploy as a normal Next.js app and configure these server environment variables in your host:
 
-## Deploy on Vercel
+- `ASSEMBLYAI_API_KEY`
+- `FOURSQUARE_API_KEY`
+- `FOURSQUARE_API_VERSION`
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Do not prefix API keys with `NEXT_PUBLIC_`.

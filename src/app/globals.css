@@ -823,6 +823,35 @@ h2 {
 }
 
 @media (max-width: 560px) {
+  .liquid-shell {
+    padding: 10px;
+    background:
+      radial-gradient(circle at 16% 10%, rgba(118, 228, 255, 0.22), transparent 24%),
+      radial-gradient(circle at 88% 18%, rgba(255, 139, 189, 0.18), transparent 26%),
+      linear-gradient(135deg, #f8fbff 0%, #f2f6fb 100%);
+  }
+
+  .liquid-shell::before {
+    opacity: 0.32;
+    background-size: 72px 72px;
+  }
+
+  .ambient {
+    width: 72vw;
+    filter: blur(24px);
+    opacity: 0.22;
+    animation-duration: 16s;
+  }
+
+  .liquid-stage {
+    min-height: calc(100vh - 20px);
+    padding: 14px;
+    border-radius: 24px;
+    background: rgba(255, 255, 255, 0.44);
+    box-shadow: 0 18px 44px rgba(75, 93, 116, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.78);
+    backdrop-filter: blur(12px) saturate(125%);
+  }
+
   .brand-row,
   .panel-head,
   .search-row,
@@ -837,6 +866,104 @@ h2 {
     width: 100%;
   }
 
+  .status-pill,
+  .glass-panel,
+  .glass-bubble,
+  .error-bubble,
+  .empty-state,
+  .note-line,
+  .icon-glass-button,
+  .skip-button,
+  .mini-map-button,
+  .map-button,
+  .search-row input,
+  .preference-grid input,
+  .segmented-control {
+    backdrop-filter: blur(8px) saturate(120%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72), 0 8px 18px rgba(64, 83, 108, 0.08);
+  }
+
+  .glass-panel {
+    border-radius: 24px;
+    background: rgba(255, 255, 255, 0.46);
+  }
+
+  .voice-panel,
+  .decision-panel {
+    padding: 18px;
+  }
+
+  .voice-state {
+    min-height: auto;
+    margin: 14px auto 12px;
+    font-size: 18px;
+  }
+
+  .mic-scene {
+    min-height: 156px;
+  }
+
+  .mic-elevation {
+    width: 132px;
+  }
+
+  .mic-aura {
+    inset: -20px;
+    filter: blur(8px);
+    background:
+      radial-gradient(circle, rgba(118, 228, 255, 0.18) 0 30%, transparent 58%),
+      conic-gradient(from 160deg, rgba(76, 141, 255, 0.06), rgba(118, 228, 255, 0.36), rgba(255, 139, 189, 0.24), rgba(141, 247, 196, 0.34), rgba(76, 141, 255, 0.06));
+  }
+
+  .mic-sphere {
+    width: 92px;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.82),
+      inset 0 -12px 22px rgba(98, 130, 164, 0.1),
+      0 12px 26px rgba(53, 76, 101, 0.12);
+    backdrop-filter: blur(10px) saturate(135%);
+  }
+
+  .mic-sphere::before,
+  .mic-sphere::after {
+    inset: -14px;
+  }
+
+  .mic-elevation-active .mic-aura {
+    animation-duration: 4s;
+  }
+
+  .mic-elevation-active .mic-sphere {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.74),
+      inset -8px -12px 22px rgba(30, 87, 157, 0.18),
+      0 0 0 7px rgba(118, 228, 255, 0.07),
+      0 14px 34px rgba(75, 140, 255, 0.22);
+    animation: liquidMicMobile 2.1s ease-in-out infinite;
+  }
+
+  .mic-elevation-active .mic-sphere::before {
+    animation: waterRingMobile 2.4s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  }
+
+  .mic-elevation-active .mic-sphere::after {
+    opacity: 0.72;
+    animation: waterDriftMobile 3.4s ease-in-out infinite;
+  }
+
+  .mic-elevation-speaking .mic-sphere {
+    animation: liquidMicMobile 1.7s ease-in-out infinite, speakGlowMobile 1.2s ease-in-out infinite;
+  }
+
+  .decision-card {
+    padding: 18px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78), 0 12px 28px rgba(77, 111, 104, 0.1);
+  }
+
+  .place-card {
+    padding: 14px;
+  }
+
   .icon-glass-button,
   .skip-button,
   .mini-map-button {
@@ -849,5 +976,71 @@ h2 {
 
   .map-button {
     width: 100%;
+  }
+}
+
+@keyframes liquidMicMobile {
+  0%,
+  100% {
+    border-radius: 51% 49% 50% 50%;
+    transform: scale(1);
+  }
+  50% {
+    border-radius: 49% 51% 48% 52%;
+    transform: scale(1.018);
+  }
+}
+
+@keyframes waterRingMobile {
+  0% {
+    opacity: 0.55;
+    transform: scale(0.62);
+  }
+  70% {
+    opacity: 0.12;
+    transform: scale(1.02);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.08);
+  }
+}
+
+@keyframes waterDriftMobile {
+  0%,
+  100% {
+    transform: translate3d(-4px, 5px, 0) scale(1.06);
+  }
+  50% {
+    transform: translate3d(5px, -4px, 0) scale(1.1);
+  }
+}
+
+@keyframes speakGlowMobile {
+  0%,
+  100% {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.74),
+      inset -8px -12px 22px rgba(30, 87, 157, 0.18),
+      0 0 0 7px rgba(118, 228, 255, 0.07),
+      0 14px 34px rgba(75, 140, 255, 0.22);
+  }
+  50% {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.84),
+      inset -9px -13px 24px rgba(30, 87, 157, 0.14),
+      0 0 0 10px rgba(118, 228, 255, 0.1),
+      0 16px 40px rgba(118, 228, 255, 0.34);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ambient,
+  .mic-aura,
+  .mic-sphere,
+  .mic-sphere::before,
+  .mic-sphere::after {
+    animation-duration: 6s !important;
+    animation-iteration-count: 1 !important;
   }
 }

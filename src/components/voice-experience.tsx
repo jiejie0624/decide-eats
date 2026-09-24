@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, LocateFixed, MapPinned, Mic, Search, Sparkles, ThumbsDown } from "lucide-react";
+import { Brain, ChevronDown, ExternalLink, LocateFixed, MapPinned, Mic, Search, ShoppingBag, Sparkles, ThumbsDown } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Recommendation, RecommendationResponse } from "@/lib/recommendations";
 import { createInlineVoiceSession } from "@/lib/voice-agent-session";
@@ -9,6 +9,7 @@ type Status = "idle" | "connecting" | "listening" | "speaking" | "error";
 type Budget = "low" | "medium" | "high";
 type AreaSource = "empty" | "browser" | "manual" | "voice";
 type ToolArguments = { query?: string; latitude?: number; longitude?: number; area?: string; budget?: Budget; partySize?: number; dietary?: string; rejectedIds?: string[] };
+type BrainStep = { id: number; label: string; detail: string };
 type AgentEvent = {
   type: string;
   text?: string;
@@ -73,6 +74,15 @@ function directionsUrl(place: Recommendation, origin?: string) {
   return url.toString();
 }
 
+function deliverySearchLinks(place: Recommendation, area?: string) {
+  const search = [place.name, area, "delivery"].filter(Boolean).join(" ");
+  return [
+    { label: "Foodpanda", url: `https://www.google.com/search?q=${encodeURIComponent(`Foodpanda ${search}`)}` },
+    { label: "GrabFood", url: `https://www.google.com/search?q=${encodeURIComponent(`GrabFood ${search}`)}` },
+    { label: "Google", url: `https://www.google.com/search?q=${encodeURIComponent(search)}` },
+  ];
+}
+
 function isRecommendationResponse(payload: RecommendationResponse | { error?: string }): payload is RecommendationResponse {
   return "recommendations" in payload && Array.isArray(payload.recommendations);
 }
@@ -125,6 +135,10 @@ export function VoiceExperience() {
   const [area, setArea] = useState("");
   const [areaSource, setAreaSource] = useState<AreaSource>("empty");
   const [expandedPlaceId, setExpandedPlaceId] = useState<string | null>(null);
+  const [brainOpen, setBrainOpen] = useState(false);
+  const [brainSteps, setBrainSteps] = useState<BrainStep[]>([
+    { id: 1, label: "Ready", detail: "Waiting for a craving, area, budget, people count, and dietary needs." },
+  ]);
   const [rejectedIds, setRejectedIds] = useState<string[]>([]);
   const [locationStatus, setLocationStatus] = useState<"idle" | "asking" | "ready" | "fallback">("idle");
   const [location, setLocation] = useState<{ latitude: number; longitude: number } | null>(null);
@@ -149,6 +163,10 @@ export function VoiceExperience() {
   const updateAreaSource = useCallback((source: AreaSource) => {
     areaSourceRef.current = source;
     setAreaSource(source);
+  }, []);
+
+  const addBrainStep = useCallback((label: string, detail: string) => {
+    setBrainSteps((steps) => [...steps, { id: Date.now() + steps.length, label, detail }].slice(-6));
   }, []);
 
   const clearPlayback = useCallback(() => {
@@ -211,10 +229,11 @@ export function VoiceExperience() {
       updateAreaSource("browser");
       areaRef.current = label;
       setArea(label);
+      addBrainStep("Location", `Browser location resolved as ${label}.`);
     } catch {
       // Coordinates are still usable even if the readable label fails.
     }
-  }, [updateAreaSource]);
+  }, [addBrainStep, updateAreaSource]);
 
   const requestLocation = useCallback(async (forceBrowserArea = false) => {
     locationRequestAttemptedRef.current = true;
@@ -254,6 +273,7 @@ export function VoiceExperience() {
   const findRecommendations = useCallback(async () => {
     setRecommendationError("");
     setIsSearching(true);
+    addBrainStep("Manual search", `Searching "${query.trim() || userText.trim() || "restaurants"}" for ${partySize} people with ${budget} budget${dietary.trim() ? ` and ${dietary.trim()} needs` : ""}.`);
     try {
       const areaText = area.trim();
       const isBrowserArea = areaSourceRef.current === "browser";
@@ -281,18 +301,20 @@ export function VoiceExperience() {
       setRecommendationMode(payload.mode);
       setAreaUsed(payload.areaUsed ?? "");
       setRecommendationNote(responseNote(payload));
+      addBrainStep("Result", `${payload.recommendations.length} places returned. Picked ${payload.decision?.name ?? payload.recommendations[0]?.name ?? "a match"}.`);
       setExpandedPlaceId(null);
     } catch (caught) {
       setRecommendationError(caught instanceof Error ? caught.message : "Unable to search restaurants.");
     } finally {
       setIsSearching(false);
     }
-  }, [area, budget, dietary, location, partySize, query, requestLocation, userText]);
+  }, [addBrainStep, area, budget, dietary, location, partySize, query, requestLocation, userText]);
 
   const runRecommendationTool = useCallback(async (message: AgentEvent) => {
     if (message.name !== "get_recommendation" || !message.call_id) return;
     setToolStatus("Voice agent is searching restaurants...");
     const args = readToolArguments(message.arguments);
+    addBrainStep("Tool call", `get_recommendation ${JSON.stringify(args).slice(0, 140)}`);
     const latestLocation = locationRef.current;
     const spokenArea = typeof args.area === "string" ? args.area.trim() : "";
     const currentArea = areaRef.current.trim();
@@ -339,14 +361,16 @@ export function VoiceExperience() {
         setRecommendationMode(result.mode);
         setAreaUsed(result.areaUsed ?? "");
         setRecommendationNote(responseNote(result) || "Voice agent searched restaurants.");
+        addBrainStep("Tool result", `${result.recommendations.length} places returned. Picked ${result.decision?.name ?? result.recommendations[0]?.name ?? "a match"}.`);
         setExpandedPlaceId(null);
       }
     } catch {
       pendingToolResults.current.push({ call_id: message.call_id, result: { error: "Restaurant search is unavailable." } });
+      addBrainStep("Tool error", "Restaurant search was unavailable, so the agent used the safe fallback path.");
     } finally {
       setToolStatus("Search result ready for the voice agent.");
     }
-  }, [budget, dietary, partySize, query, updateAreaSource, userText]);
+  }, [addBrainStep, budget, dietary, partySize, query, updateAreaSource, userText]);
 
   const flushToolResults = useCallback((socket: WebSocket) => {
     if (socket.readyState !== WebSocket.OPEN || pendingToolResults.current.length === 0) return;
@@ -365,8 +389,9 @@ export function VoiceExperience() {
     setDecision(null);
     setRecommendations((items) => items.filter((item) => item.id !== decision.id));
     setRecommendationNote(`Skipped ${decision.name}. Searching for the next best pick.`);
+    addBrainStep("Skip", `User skipped ${decision.name}; searching for another option.`);
     void findRecommendations();
-  }, [decision, findRecommendations]);
+  }, [addBrainStep, decision, findRecommendations]);
 
   const start = useCallback(async () => {
     if (!window.isSecureContext) {
@@ -445,6 +470,7 @@ export function VoiceExperience() {
           userSpeakingRef.current = false;
           setUserText(message.text);
           setQuery(message.text);
+          addBrainStep("Heard user", message.text);
         } else if (message.type === "transcript.agent" && message.text) setAgentText(message.text);
         else if (message.type === "tool.call") void runRecommendationTool(message);
         else if (message.type === "reply.done") {
@@ -465,7 +491,7 @@ export function VoiceExperience() {
       stream.current?.getTracks().forEach((track) => track.stop());
       void context.current?.close();
     }
-  }, [clearPlayback, flushToolResults, play, requestLocation, runRecommendationTool]);
+  }, [addBrainStep, clearPlayback, flushToolResults, play, requestLocation, runRecommendationTool]);
 
   useEffect(() => () => stop(), [stop]);
   useEffect(() => {
@@ -500,6 +526,7 @@ export function VoiceExperience() {
         : locationStatus === "fallback"
           ? "Location permission was not available. Type an Area or say your location."
           : "Choose manual Area, browser location, or voice input.";
+  const deliveryLinks = decision ? deliverySearchLinks(decision, typedArea || areaUsed) : [];
 
   return (
     <main className="liquid-shell">
@@ -625,6 +652,24 @@ export function VoiceExperience() {
 
             <p className="location-line">{locationMessage}</p>
 
+            <section className={`brain-panel ${brainOpen ? "brain-panel-open" : ""}`}>
+              <button type="button" onClick={() => setBrainOpen((open) => !open)} aria-expanded={brainOpen}>
+                <span>
+                  <Brain />
+                  Agent brain
+                </span>
+                <ChevronDown />
+              </button>
+              <div className="brain-steps">
+                {brainSteps.map((step) => (
+                  <div key={step.id}>
+                    <strong>{step.label}</strong>
+                    <span>{step.detail}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+
             <div className="results-stack">
               {recommendations.length === 0 ? (
                 <div className="empty-state">Speak or type a craving. DecideEats will choose one nearby pick and explain why.</div>
@@ -644,6 +689,20 @@ export function VoiceExperience() {
                           <MapPinned />
                           Directions
                         </a>
+                        <div className="delivery-menu">
+                          <span>
+                            <ShoppingBag />
+                            Delivery
+                          </span>
+                          <div>
+                            {deliveryLinks.map((link) => (
+                              <a key={link.label} href={link.url} target="_blank" rel="noreferrer">
+                                {link.label}
+                                <ExternalLink />
+                              </a>
+                            ))}
+                          </div>
+                        </div>
                         <button type="button" onClick={rejectDecision} className="skip-button" title="Skip this pick" aria-label="Skip this pick">
                           <ThumbsDown />
                         </button>

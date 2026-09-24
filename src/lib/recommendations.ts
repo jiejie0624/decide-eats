@@ -117,27 +117,27 @@ export function interpretCraving(query: string, dietary?: string) {
     {
       intent: "healthy / lighter food",
       searchQuery: "healthy food salad vegetarian poke bowl soup grilled",
-      patterns: [/healthy|healthier|clean|light|lighter|diet|fresh|salad|健康|清淡|轻食|低卡|少油/],
+      patterns: [/healthy|healthier|clean|light|lighter|diet|fresh|salad|sihat|sehat|健康|清淡|轻食|低卡|少油/],
     },
     {
       intent: "spicy food",
       searchQuery: "spicy food thai korean curry mala sichuan indian",
-      patterns: [/spicy|hot food|mala|curry|thai|sichuan|korean|辣|麻辣|咖喱|重口味/],
+      patterns: [/spicy|hot food|mala|curry|thai|sichuan|korean|pedas|辣|麻辣|咖喱|重口味/],
     },
     {
       intent: "cheap and filling",
       searchQuery: "cheap food nasi lemak mamak kopitiam rice noodles hawker",
-      patterns: [/cheap|budget|affordable|filling|value|save money|便宜|划算|经济|饱|吃饱/],
+      patterns: [/cheap|budget|affordable|filling|value|save money|murah|kenyang|jimat|便宜|划算|经济|饱|吃饱/],
     },
     {
       intent: "sweet dessert",
       searchQuery: "dessert cake ice cream waffles cafe",
-      patterns: [/sweet|dessert|cake|ice cream|waffle|甜|甜品|蛋糕|冰淇淋/],
+      patterns: [/sweet|dessert|cake|ice cream|waffle|manis|甜|甜品|蛋糕|冰淇淋/],
     },
     {
       intent: "late-night food",
       searchQuery: "late night food mamak burger noodles supper",
-      patterns: [/late|midnight|supper|night|宵夜|半夜|晚上/],
+      patterns: [/late|midnight|supper|night|malam|lepak|宵夜|半夜|晚上/],
     },
     {
       intent: "date / comfortable place",
@@ -146,9 +146,16 @@ export function interpretCraving(query: string, dietary?: string) {
     },
   ];
   const match = intents.find((item) => item.patterns.some((pattern) => pattern.test(normalized)));
+  const dietaryTerms: string[] = [];
+  if (/halal|muslim|no pork|tak mau pork|不要猪|不要豬|清真/.test(normalized)) dietaryTerms.push("halal");
+  if (/vegan|plant[- ]?based|纯素|純素/.test(normalized)) dietaryTerms.push("vegan");
+  if (/vegetarian|veggie|素食|吃素/.test(normalized)) dietaryTerms.push("vegetarian");
+  if (/gluten/.test(normalized)) dietaryTerms.push("gluten free");
+  if (/no beef|不要牛|tak mau beef/.test(normalized)) dietaryTerms.push("no beef");
+  const searchQuery = [match?.searchQuery ?? normalizeQuery(query), ...dietaryTerms].filter(Boolean).join(" ");
   return {
     originalQuery: normalizeQuery(query),
-    searchQuery: match?.searchQuery ?? normalizeQuery(query),
+    searchQuery,
     intent: match?.intent,
   };
 }
@@ -228,6 +235,35 @@ function withPriceGuidance(place: Recommendation, request: RecommendationRequest
   };
 }
 
+function preferenceScore(place: Recommendation, request: RecommendationRequest) {
+  const text = `${place.name} ${place.category} ${place.address}`.toLowerCase();
+  const dietary = request.dietary?.toLowerCase() ?? "";
+  let score = 0;
+
+  if (/halal|muslim|清真/.test(dietary)) {
+    if (/halal|muslim|mamak|nasi|malay|indian|arab|middle eastern/.test(text)) score += 18;
+    if (/bar|pub|wine|pork|bak kut teh|bkt|beer/.test(text)) score -= 28;
+  }
+  if (/vegan|vegetarian|veggie|plant|素食|纯素|純素/.test(dietary)) {
+    if (/vegetarian|vegan|veggie|salad|healthy|poke|indian|thai|japanese|cafe/.test(text)) score += 20;
+    if (/steak|bbq|burger|chicken|pork|seafood|fish|beef/.test(text)) score -= 18;
+  }
+  if (/no pork|tak mau pork|不要猪|不要豬/.test(dietary)) {
+    if (/pork|bak kut teh|bkt|char siu|roast pork/.test(text)) score -= 30;
+    if (/halal|muslim|malay|indian/.test(text)) score += 12;
+  }
+  if (/no beef|不要牛/.test(dietary) && /beef|steak|burger/.test(text)) score -= 18;
+
+  if (request.partySize && request.partySize >= 5) {
+    if (/restaurant|cafe|bistro|food court|mamak|kopitiam|kitchen/.test(text)) score += 10;
+    if (/kiosk|stall|cart|stand|takeaway/.test(text)) score -= 8;
+  }
+
+  if (request.budget === "low" && /hawker|mamak|kopitiam|nasi|mee|noodle|food court|warung/.test(text)) score += 10;
+  if (request.budget === "high" && /hotel|fine|steak|sushi|japanese|seafood|bistro/.test(text)) score += 8;
+  return score;
+}
+
 export function demoRecommendations(request: RecommendationRequest, note?: string): RecommendationResponse {
   const craving = interpretCraving(request.query, request.dietary);
   const query = craving.searchQuery.toLowerCase();
@@ -288,8 +324,8 @@ export function rankRecommendations(places: Recommendation[], request: Recommend
     .sort((left, right) => {
       const leftFit = left.budgetFit === "good" ? 10 : left.budgetFit === "ok" ? 3 : -12;
       const rightFit = right.budgetFit === "good" ? 10 : right.budgetFit === "ok" ? 3 : -12;
-      const leftScore = (left.rating ?? 7) * 10 - (left.distanceMeters ?? 1200) / 250 + leftFit;
-      const rightScore = (right.rating ?? 7) * 10 - (right.distanceMeters ?? 1200) / 250 + rightFit;
+      const leftScore = (left.rating ?? 7) * 10 - (left.distanceMeters ?? 1200) / 250 + leftFit + preferenceScore(left, request);
+      const rightScore = (right.rating ?? 7) * 10 - (right.distanceMeters ?? 1200) / 250 + rightFit + preferenceScore(right, request);
       return rightScore - leftScore;
     });
 }

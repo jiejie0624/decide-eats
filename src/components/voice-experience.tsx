@@ -122,6 +122,7 @@ export function VoiceExperience() {
   const [partySize, setPartySize] = useState(2);
   const [dietary, setDietary] = useState("");
   const [area, setArea] = useState("");
+  const [areaSource, setAreaSource] = useState<AreaSource>("empty");
   const [expandedPlaceId, setExpandedPlaceId] = useState<string | null>(null);
   const [rejectedIds, setRejectedIds] = useState<string[]>([]);
   const [locationStatus, setLocationStatus] = useState<"idle" | "asking" | "ready" | "fallback">("idle");
@@ -143,6 +144,11 @@ export function VoiceExperience() {
   const activeReplyEpochRef = useRef(-1);
   const pendingToolResults = useRef<Array<{ call_id: string; result: RecommendationResponse | { error: string } }>>([]);
   const rejectedIdsRef = useRef<string[]>([]);
+
+  const updateAreaSource = useCallback((source: AreaSource) => {
+    areaSourceRef.current = source;
+    setAreaSource(source);
+  }, []);
 
   const clearPlayback = useCallback(() => {
     outputs.current.forEach((item) => {
@@ -194,9 +200,24 @@ export function VoiceExperience() {
     };
   }, []);
 
-  const requestLocation = useCallback(async () => {
+  const fillAreaFromCoordinates = useCallback(async (coordinates: { latitude: number; longitude: number }, overwrite = false) => {
+    try {
+      const response = await fetch(`/api/reverse-geocode?lat=${coordinates.latitude}&lon=${coordinates.longitude}`, { cache: "no-store" });
+      const payload = response.ok ? ((await response.json()) as { label?: string }) : null;
+      const label = payload?.label?.trim();
+      if (!label) return;
+      if (!overwrite && (areaSourceRef.current === "manual" || areaSourceRef.current === "voice")) return;
+      updateAreaSource("browser");
+      areaRef.current = label;
+      setArea(label);
+    } catch {
+      // Coordinates are still usable even if the readable label fails.
+    }
+  }, [updateAreaSource]);
+
+  const requestLocation = useCallback(async (forceBrowserArea = false) => {
     locationRequestAttemptedRef.current = true;
-    if (locationRef.current) {
+    if (locationRef.current && !forceBrowserArea) {
       setLocationStatus("ready");
       locationStatusRef.current = "ready";
       return locationRef.current;
@@ -216,18 +237,7 @@ export function VoiceExperience() {
           locationRef.current = next;
           setLocationStatus("ready");
           locationStatusRef.current = "ready";
-          void fetch(`/api/reverse-geocode?lat=${next.latitude}&lon=${next.longitude}`, { cache: "no-store" })
-            .then((response) => (response.ok ? response.json() : null) as Promise<{ label?: string } | null>)
-            .then((payload) => {
-              const label = payload?.label?.trim();
-              if (!label || areaSourceRef.current === "manual" || areaSourceRef.current === "voice") return;
-              areaSourceRef.current = "browser";
-              areaRef.current = label;
-              setArea(label);
-            })
-            .catch(() => {
-              // Location coordinates are still available even if the readable label fails.
-            });
+          void fillAreaFromCoordinates(next, forceBrowserArea);
           resolve(next);
         },
         () => {
@@ -238,7 +248,7 @@ export function VoiceExperience() {
         { enableHighAccuracy: false, maximumAge: 300000, timeout: 8000 },
       );
     });
-  }, []);
+  }, [fillAreaFromCoordinates]);
 
   const findRecommendations = useCallback(async () => {
     setRecommendationError("");
@@ -294,7 +304,7 @@ export function VoiceExperience() {
         : partySize;
     const nextDietary = typeof args.dietary === "string" && args.dietary.trim() ? args.dietary.trim() : dietary.trim() || undefined;
     if (spokenArea) {
-      areaSourceRef.current = "voice";
+      updateAreaSource("voice");
       areaRef.current = spokenArea;
       setArea(spokenArea);
       setLocation(null);
@@ -336,7 +346,7 @@ export function VoiceExperience() {
     } finally {
       setToolStatus("Search result ready for the voice agent.");
     }
-  }, [budget, dietary, partySize, query, userText]);
+  }, [budget, dietary, partySize, query, updateAreaSource, userText]);
 
   const flushToolResults = useCallback((socket: WebSocket) => {
     if (socket.readyState !== WebSocket.OPEN || pendingToolResults.current.length === 0) return;
@@ -504,9 +514,12 @@ export function VoiceExperience() {
   const voiceActive = status === "connecting" || status === "listening" || status === "speaking";
   const orbClass = `mic-elevation ${voiceActive ? "mic-elevation-active" : ""} ${status === "listening" ? "mic-elevation-listening" : ""} ${status === "speaking" ? "mic-elevation-speaking" : ""}`;
   const typedArea = area.trim();
-  const routeOrigin = typedArea || (location ? `${location.latitude},${location.longitude}` : areaUsed || undefined);
+  const isBrowserArea = areaSource === "browser";
+  const routeOrigin = isBrowserArea && location ? `${location.latitude},${location.longitude}` : typedArea || (location ? `${location.latitude},${location.longitude}` : areaUsed || undefined);
   const locationMessage = typedArea
-    ? `Using typed area: ${typedArea}.`
+    ? isBrowserArea
+      ? `Using browser location: ${typedArea}.`
+      : `Using typed area: ${typedArea}.`
     : locationStatus === "ready"
       ? "Using your browser location."
       : locationStatus === "asking"
@@ -582,7 +595,7 @@ export function VoiceExperience() {
                 <p className="eyebrow">Decision Board</p>
                 <h2>One place, not ten tabs.</h2>
               </div>
-              <button type="button" onClick={() => void requestLocation()} className="icon-glass-button" title="Use browser location" aria-label="Use browser location">
+              <button type="button" onClick={() => void requestLocation(true)} className="icon-glass-button" title="Use browser location" aria-label="Use browser location">
                 <LocateFixed />
               </button>
             </div>
@@ -627,7 +640,7 @@ export function VoiceExperience() {
                 <input
                   value={area}
                   onChange={(event) => {
-                    areaSourceRef.current = event.target.value.trim() ? "manual" : "empty";
+                    updateAreaSource(event.target.value.trim() ? "manual" : "empty");
                     setArea(event.target.value);
                     areaRef.current = event.target.value;
                     setLocationStatus("idle");

@@ -29,6 +29,8 @@ export type Recommendation = {
 export type RecommendationResponse = {
   mode: "live" | "demo";
   query: string;
+  interpretedQuery?: string;
+  cravingIntent?: string;
   areaUsed?: string;
   locationUsed: boolean;
   recommendations: Recommendation[];
@@ -109,6 +111,48 @@ export function normalizeQuery(query: string) {
   return trimmed || "restaurants";
 }
 
+export function interpretCraving(query: string, dietary?: string) {
+  const normalized = normalizeQuery(`${query} ${dietary ?? ""}`).toLowerCase();
+  const intents: Array<{ intent: string; searchQuery: string; patterns: RegExp[] }> = [
+    {
+      intent: "healthy / lighter food",
+      searchQuery: "healthy food salad vegetarian poke bowl soup grilled",
+      patterns: [/healthy|healthier|clean|light|lighter|diet|fresh|salad|健康|清淡|轻食|低卡|少油/],
+    },
+    {
+      intent: "spicy food",
+      searchQuery: "spicy food thai korean curry mala sichuan indian",
+      patterns: [/spicy|hot food|mala|curry|thai|sichuan|korean|辣|麻辣|咖喱|重口味/],
+    },
+    {
+      intent: "cheap and filling",
+      searchQuery: "cheap food nasi lemak mamak kopitiam rice noodles hawker",
+      patterns: [/cheap|budget|affordable|filling|value|save money|便宜|划算|经济|饱|吃饱/],
+    },
+    {
+      intent: "sweet dessert",
+      searchQuery: "dessert cake ice cream waffles cafe",
+      patterns: [/sweet|dessert|cake|ice cream|waffle|甜|甜品|蛋糕|冰淇淋/],
+    },
+    {
+      intent: "late-night food",
+      searchQuery: "late night food mamak burger noodles supper",
+      patterns: [/late|midnight|supper|night|宵夜|半夜|晚上/],
+    },
+    {
+      intent: "date / comfortable place",
+      searchQuery: "cafe restaurant bistro japanese western",
+      patterns: [/date|romantic|comfortable|cozy|quiet|couple|约会|舒服|安静|聊天|情侣/],
+    },
+  ];
+  const match = intents.find((item) => item.patterns.some((pattern) => pattern.test(normalized)));
+  return {
+    originalQuery: normalizeQuery(query),
+    searchQuery: match?.searchQuery ?? normalizeQuery(query),
+    intent: match?.intent,
+  };
+}
+
 function estimatePriceLevel(place: Pick<Recommendation, "category" | "name" | "price">, request: RecommendationRequest) {
   if (place.price) return Math.max(1, Math.min(4, place.price));
   const text = `${place.name} ${place.category} ${request.query}`.toLowerCase();
@@ -145,7 +189,8 @@ function withPriceGuidance(place: Recommendation, request: RecommendationRequest
 }
 
 export function demoRecommendations(request: RecommendationRequest, note?: string): RecommendationResponse {
-  const query = normalizeQuery(request.query).toLowerCase();
+  const craving = interpretCraving(request.query, request.dietary);
+  const query = craving.searchQuery.toLowerCase();
   const rejectedIds = new Set(request.rejectedIds ?? []);
   const ranked = demoPlaces.filter((place) => !rejectedIds.has(place.id)).map((place) => {
     const keywordBoost = place.category.toLowerCase().includes(query) || query.includes(place.category.toLowerCase()) ? 0.4 : 0;
@@ -156,6 +201,8 @@ export function demoRecommendations(request: RecommendationRequest, note?: strin
   return {
     mode: "demo",
     query: normalizeQuery(request.query),
+    interpretedQuery: craving.intent ? craving.searchQuery : undefined,
+    cravingIntent: craving.intent,
     locationUsed: Boolean(request.latitude && request.longitude),
     recommendations: ranked,
     decision: ranked[0],
@@ -164,7 +211,8 @@ export function demoRecommendations(request: RecommendationRequest, note?: strin
 }
 
 export function scoreReason(place: Recommendation, request: RecommendationRequest) {
-  const parts = [`Matches "${normalizeQuery(request.query)}"`];
+  const craving = interpretCraving(request.query, request.dietary);
+  const parts = [craving.intent ? `Matches your ${craving.intent} craving` : `Matches "${normalizeQuery(request.query)}"`];
   if (place.distanceMeters) parts.push(`${Math.round(place.distanceMeters)}m away`);
   if (place.priceLabel) parts.push(`${place.priceLabel}${place.priceNote?.includes("estimated") ? " est." : ""}`);
   if (place.budgetFit === "good") parts.push("fits budget");

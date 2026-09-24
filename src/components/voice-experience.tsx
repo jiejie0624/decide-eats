@@ -1,6 +1,6 @@
 "use client";
 
-import { LocateFixed, MapPinned, Mic, Search, Sparkles, ThumbsDown } from "lucide-react";
+import { ChevronDown, LocateFixed, MapPinned, Mic, Search, Sparkles, ThumbsDown } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Recommendation, RecommendationResponse } from "@/lib/recommendations";
 
@@ -87,6 +87,11 @@ function readToolArguments(value: ToolArguments | string | undefined): ToolArgum
   }
 }
 
+function responseNote(payload: RecommendationResponse) {
+  const intentNote = payload.cravingIntent ? `Understood as ${payload.cravingIntent}.` : "";
+  return [intentNote, payload.note].filter(Boolean).join(" ");
+}
+
 function withLocationTimeout(promise: Promise<{ latitude: number; longitude: number } | null>, onTimeout: () => void, timeoutMs = 1500) {
   return Promise.race([
     promise,
@@ -117,6 +122,7 @@ export function VoiceExperience() {
   const [partySize, setPartySize] = useState(2);
   const [dietary, setDietary] = useState("");
   const [area, setArea] = useState("");
+  const [expandedPlaceId, setExpandedPlaceId] = useState<string | null>(null);
   const [rejectedIds, setRejectedIds] = useState<string[]>([]);
   const [locationStatus, setLocationStatus] = useState<"idle" | "asking" | "ready" | "fallback">("idle");
   const [location, setLocation] = useState<{ latitude: number; longitude: number } | null>(null);
@@ -263,7 +269,8 @@ export function VoiceExperience() {
       setDecision(payload.decision ?? payload.recommendations[0] ?? null);
       setRecommendationMode(payload.mode);
       setAreaUsed(payload.areaUsed ?? "");
-      setRecommendationNote(payload.note ?? "");
+      setRecommendationNote(responseNote(payload));
+      setExpandedPlaceId(null);
     } catch (caught) {
       setRecommendationError(caught instanceof Error ? caught.message : "Unable to search restaurants.");
     } finally {
@@ -321,7 +328,8 @@ export function VoiceExperience() {
         setDecision(result.decision ?? result.recommendations[0] ?? null);
         setRecommendationMode(result.mode);
         setAreaUsed(result.areaUsed ?? "");
-        setRecommendationNote(result.note ?? "Voice agent searched restaurants.");
+        setRecommendationNote(responseNote(result) || "Voice agent searched restaurants.");
+        setExpandedPlaceId(null);
       }
     } catch {
       pendingToolResults.current.push({ call_id: message.call_id, result: { error: "Restaurant search is unavailable." } });
@@ -658,12 +666,22 @@ export function VoiceExperience() {
                   )}
 
                   {recommendations.map((item, index) => (
-                    <article key={item.id} className="place-card">
+                    <article key={item.id} className={`place-card ${expandedPlaceId === item.id ? "place-card-expanded" : ""}`}>
                       <div>
                         <p>Pick {index + 1}</p>
                         <h3>{item.name}</h3>
                         <span>{item.category} · {priceLabel(item)} · {budgetLabel(item)}</span>
                         <small>{item.address}</small>
+                        <button
+                          type="button"
+                          className="why-button"
+                          aria-expanded={expandedPlaceId === item.id}
+                          onClick={() => setExpandedPlaceId((current) => (current === item.id ? null : item.id))}
+                        >
+                          Why this?
+                          <ChevronDown />
+                        </button>
+                        <strong className="place-reason">{item.reason}</strong>
                       </div>
                       <a href={directionsUrl(item, routeOrigin)} target="_blank" rel="noreferrer" className="mini-map-button" title="Open directions in Google Maps" aria-label={`Open directions to ${item.name}`}>
                         <MapPinned />

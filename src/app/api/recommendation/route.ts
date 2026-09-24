@@ -4,6 +4,7 @@ import {
   type FoursquarePlace,
   mapFoursquarePlace,
   normalizeQuery,
+  interpretCraving,
   rankRecommendations,
   type RecommendationRequest,
 } from "@/lib/recommendations";
@@ -153,7 +154,8 @@ export async function POST(request: Request) {
 
   const recommendationRequest = readRequest(body);
   const apiKey = process.env.FOURSQUARE_API_KEY;
-  const query = normalizeQuery(recommendationRequest.query);
+  const craving = interpretCraving(recommendationRequest.query, recommendationRequest.dietary);
+  const query = normalizeQuery(craving.searchQuery);
 
   if (!apiKey) {
     return NextResponse.json(demoRecommendations(recommendationRequest), { headers: { "Cache-Control": "no-store" } });
@@ -216,7 +218,9 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         mode: "live",
-        query,
+        query: normalizeQuery(recommendationRequest.query),
+        interpretedQuery: craving.intent ? query : undefined,
+        cravingIntent: craving.intent,
         areaUsed: resolvedAreaUsed,
         locationUsed: hasUserLocation,
         recommendations: rankedPlaces,

@@ -264,7 +264,7 @@ export function VoiceExperience() {
           query: query.trim() || userText.trim() || "restaurants",
           latitude: latestLocation?.latitude,
           longitude: latestLocation?.longitude,
-          area: isBrowserArea ? userText : areaText || userText,
+          area: areaText || userText,
           budget,
           partySize,
           dietary: dietary.trim() || undefined,
@@ -295,7 +295,6 @@ export function VoiceExperience() {
     const latestLocation = locationRef.current;
     const spokenArea = typeof args.area === "string" ? args.area.trim() : "";
     const currentArea = areaRef.current.trim();
-    const isBrowserArea = areaSourceRef.current === "browser";
     const nextArea = spokenArea || currentArea || userText.trim();
     const nextBudget = args.budget ?? budget;
     const nextPartySize =
@@ -323,7 +322,7 @@ export function VoiceExperience() {
           query: args.query ?? (query.trim() || userText.trim() || "restaurants"),
           latitude: args.latitude ?? (spokenArea ? undefined : latestLocation?.latitude),
           longitude: args.longitude ?? (spokenArea ? undefined : latestLocation?.longitude),
-          area: isBrowserArea && !spokenArea ? undefined : nextArea,
+          area: nextArea,
           budget: nextBudget,
           partySize: nextPartySize,
           dietary: nextDietary,
@@ -418,8 +417,8 @@ export function VoiceExperience() {
           ? { agent_id: storedAgentId }
           : {
               system_prompt:
-                `You are DecideEats, a concise restaurant decision assistant. Keep spoken replies short so the user can interrupt naturally. ${locationInstruction} Ask only one missing essential at a time, such as cuisine, budget, party size, or dietary constraints. When the user says where they live, where they are, or names a city/suburb/state such as Miri, Sarawak, put that place in the get_recommendation area field exactly and treat it as the current search area unless the user later changes it. When the user says how many people are eating, such as 'for 3 people', 'two of us', or '三个人吃', put the number in partySize. When the user gives a food preference or rejects a pick, call get_recommendation. Use the returned JSON to recommend one clear pick and explain why in one or two sentences. Never invent restaurant facts outside the tool result.`,
-              greeting: "Hi, I'm DecideEats. Tell me what you feel like eating.",
+                `You are DecideEats, a concise restaurant decision assistant. Keep spoken replies short so the user can interrupt naturally. ${locationInstruction} Your job is to collect enough restaurant decision context, not only cuisine and location. If the user has not clearly provided them, ask naturally for party size, rough budget, and dietary needs in one short question, for example: "How many people, what budget, and any dietary needs?" Do not ask these again once answered. If the user provides cuisine/craving plus enough constraints, call get_recommendation. If the user gives only a vague craving like healthy, spicy, cheap, light, late-night, or date place, still treat it as a valid query and continue collecting missing constraints. When the user says where they live, where they are, or names a city/suburb/state such as Miri, Sarawak, put that place in the get_recommendation area field exactly and treat it as the current search area unless the user later changes it. When the user says how many people are eating, such as 'for 3 people', 'two of us', or '三个人吃', put the number in partySize. Map budget words to low, medium, or high: cheap/easy/not expensive = low; comfortable/normal = medium; worth it/premium = high. Capture dietary constraints such as halal, vegan, vegetarian, no pork, no beef, gluten free, or allergies. Use the returned JSON to recommend one clear pick and explain why in one or two sentences. Never invent restaurant facts outside the tool result.`,
+              greeting: "Hi, I'm DecideEats. Tell me what you feel like eating, how many people, your budget, and any dietary needs.",
               input: { format: { encoding: "audio/pcm" } },
               output: { voice: "alba", format: { encoding: "audio/pcm" }, volume: 100 },
               tools: [
@@ -434,9 +433,9 @@ export function VoiceExperience() {
                       latitude: { type: "number", description: "Optional latitude if the user explicitly supplied it." },
                       longitude: { type: "number", description: "Optional longitude if the user explicitly supplied it." },
                       area: { type: "string", description: "City, suburb, state, or neighborhood mentioned by the user, such as Miri, Sarawak or Tun Aminah. Use this whenever the user says they live in, are from, or are currently in a place." },
-                      budget: { type: "string", enum: ["low", "medium", "high"], description: "Optional rough budget." },
+                      budget: { type: "string", enum: ["low", "medium", "high"], description: "Rough budget. Use low for cheap/easy budget/not expensive, medium for normal/comfortable, and high for worth it/premium." },
                       partySize: { type: "number", description: "Number of people eating. Extract this from phrases like 'for 3 people', 'two of us', 'couple', 'family of four', or Chinese phrases like '三个人吃'." },
-                      dietary: { type: "string", description: "Optional dietary requirement such as halal, vegan, vegetarian, gluten free, or no pork." },
+                      dietary: { type: "string", description: "Dietary requirement such as halal, vegan, vegetarian, gluten free, no pork, no beef, allergies, or no restriction." },
                       rejectedIds: { type: "array", items: { type: "string" }, description: "Restaurant ids the user already rejected." },
                     },
                     required: ["query"],

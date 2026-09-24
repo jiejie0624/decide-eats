@@ -162,13 +162,6 @@ function estimatePriceLevel(place: Pick<Recommendation, "category" | "name" | "p
   return request.budget === "high" ? 3 : request.budget === "low" ? 1 : 2;
 }
 
-function priceRange(level: number) {
-  if (level <= 1) return "RM5–15";
-  if (level === 2) return "RM12–30";
-  if (level === 3) return "RM25–60";
-  return "RM60+";
-}
-
 function budgetFit(level: number, budget?: RecommendationRequest["budget"]): Recommendation["budgetFit"] {
   if (!budget) return "ok";
   if (budget === "low") return level <= 1 ? "good" : level === 2 ? "ok" : "stretch";
@@ -176,13 +169,60 @@ function budgetFit(level: number, budget?: RecommendationRequest["budget"]): Rec
   return level >= 3 ? "good" : "ok";
 }
 
+function coordinatesIn(request: RecommendationRequest, bounds: { minLat: number; maxLat: number; minLon: number; maxLon: number }) {
+  return (
+    typeof request.latitude === "number" &&
+    typeof request.longitude === "number" &&
+    request.latitude >= bounds.minLat &&
+    request.latitude <= bounds.maxLat &&
+    request.longitude >= bounds.minLon &&
+    request.longitude <= bounds.maxLon
+  );
+}
+
+function detectCurrency(request: RecommendationRequest) {
+  const area = `${request.area ?? ""} ${request.query}`.toLowerCase();
+  if (/(united states|usa|u\.s\.|america|new york|los angeles|san francisco|chicago|seattle|boston)/.test(area) || coordinatesIn(request, { minLat: 24, maxLat: 50, minLon: -125, maxLon: -66 })) {
+    return { code: "USD", ranges: ["$5–12", "$12–25", "$25–50", "$50+"] };
+  }
+  if (/(china|中国|beijing|北京|shanghai|上海|guangzhou|广州|shenzhen|深圳|chengdu|成都)/.test(area) || coordinatesIn(request, { minLat: 18, maxLat: 54, minLon: 73, maxLon: 135 })) {
+    return { code: "CNY", ranges: ["¥20–50", "¥50–100", "¥100–200", "¥200+"] };
+  }
+  if (/(singapore|新加坡)/.test(area) || coordinatesIn(request, { minLat: 1.15, maxLat: 1.5, minLon: 103.55, maxLon: 104.1 })) {
+    return { code: "SGD", ranges: ["S$5–12", "S$12–25", "S$25–50", "S$50+"] };
+  }
+  if (/(japan|日本|tokyo|東京|osaka|大阪|kyoto|京都)/.test(area) || coordinatesIn(request, { minLat: 30, maxLat: 46, minLon: 129, maxLon: 146 })) {
+    return { code: "JPY", ranges: ["¥600–1,200", "¥1,200–2,500", "¥2,500–5,000", "¥5,000+"] };
+  }
+  if (/(korea|south korea|韩国|韓國|seoul|首尔|首爾)/.test(area) || coordinatesIn(request, { minLat: 33, maxLat: 39, minLon: 124, maxLon: 132 })) {
+    return { code: "KRW", ranges: ["₩7k–15k", "₩15k–30k", "₩30k–60k", "₩60k+"] };
+  }
+  if (/(thailand|泰国|泰國|bangkok|曼谷)/.test(area) || coordinatesIn(request, { minLat: 5, maxLat: 21, minLon: 97, maxLon: 106 })) {
+    return { code: "THB", ranges: ["฿60–150", "฿150–350", "฿350–800", "฿800+"] };
+  }
+  if (/(indonesia|印尼|jakarta|雅加达|bali|巴厘)/.test(area) || coordinatesIn(request, { minLat: -11, maxLat: 6, minLon: 95, maxLon: 141 })) {
+    return { code: "IDR", ranges: ["Rp20k–50k", "Rp50k–120k", "Rp120k–250k", "Rp250k+"] };
+  }
+  if (/(philippines|菲律宾|菲律賓|manila|马尼拉)/.test(area) || coordinatesIn(request, { minLat: 4, maxLat: 22, minLon: 116, maxLon: 127 })) {
+    return { code: "PHP", ranges: ["₱100–250", "₱250–600", "₱600–1,200", "₱1,200+"] };
+  }
+  if (/(united kingdom|uk|england|london|英国|英國)/.test(area) || coordinatesIn(request, { minLat: 49, maxLat: 59, minLon: -8, maxLon: 2 })) {
+    return { code: "GBP", ranges: ["£5–12", "£12–25", "£25–50", "£50+"] };
+  }
+  if (/(europe|france|germany|italy|spain|netherlands|paris|berlin|rome|madrid|欧洲|歐洲|法国|德國|德国|意大利|西班牙)/.test(area)) {
+    return { code: "EUR", ranges: ["€6–12", "€12–25", "€25–50", "€50+"] };
+  }
+  return { code: "MYR", ranges: ["RM5–15", "RM12–30", "RM25–60", "RM60+"] };
+}
+
 function withPriceGuidance(place: Recommendation, request: RecommendationRequest): Recommendation {
   const level = estimatePriceLevel(place, request);
   const apiProvidedPrice = Boolean(place.price);
+  const currency = detectCurrency(request);
   return {
     ...place,
     price: place.price ?? level,
-    priceLabel: place.priceLabel ?? priceRange(level),
+    priceLabel: place.priceLabel ?? currency.ranges[Math.max(1, Math.min(4, level)) - 1],
     priceNote: place.priceNote ?? (apiProvidedPrice ? "price level from provider" : "estimated from place type"),
     budgetFit: place.budgetFit ?? budgetFit(level, request.budget),
   };

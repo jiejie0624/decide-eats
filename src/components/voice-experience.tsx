@@ -6,6 +6,7 @@ import type { Recommendation, RecommendationResponse } from "@/lib/recommendatio
 
 type Status = "idle" | "connecting" | "listening" | "speaking" | "error";
 type Budget = "low" | "medium" | "high";
+type AreaSource = "empty" | "browser" | "manual" | "voice";
 type ToolArguments = { query?: string; latitude?: number; longitude?: number; area?: string; budget?: Budget; partySize?: number; dietary?: string; rejectedIds?: string[] };
 type AgentEvent = {
   type: string;
@@ -128,6 +129,9 @@ export function VoiceExperience() {
   const outputs = useRef<AudioBufferSourceNode[]>([]);
   const locationRef = useRef<{ latitude: number; longitude: number } | null>(null);
   const areaRef = useRef("");
+  const areaSourceRef = useRef<AreaSource>("empty");
+  const locationStatusRef = useRef<"idle" | "asking" | "ready" | "fallback">("idle");
+  const locationRequestAttemptedRef = useRef(false);
   const userSpeakingRef = useRef(false);
   const conversationEpochRef = useRef(0);
   const activeReplyEpochRef = useRef(-1);
@@ -185,11 +189,19 @@ export function VoiceExperience() {
   }, []);
 
   const requestLocation = useCallback(async () => {
+    locationRequestAttemptedRef.current = true;
+    if (locationRef.current) {
+      setLocationStatus("ready");
+      locationStatusRef.current = "ready";
+      return locationRef.current;
+    }
     if (!navigator.geolocation) {
       setLocationStatus("fallback");
+      locationStatusRef.current = "fallback";
       return null;
     }
     setLocationStatus("asking");
+    locationStatusRef.current = "asking";
     return new Promise<{ latitude: number; longitude: number } | null>((resolve) => {
       navigator.geolocation.getCurrentPosition(
         (position) => {
@@ -197,10 +209,24 @@ export function VoiceExperience() {
           setLocation(next);
           locationRef.current = next;
           setLocationStatus("ready");
+          locationStatusRef.current = "ready";
+          void fetch(`/api/reverse-geocode?lat=${next.latitude}&lon=${next.longitude}`, { cache: "no-store" })
+            .then((response) => (response.ok ? response.json() : null) as Promise<{ label?: string } | null>)
+            .then((payload) => {
+              const label = payload?.label?.trim();
+              if (!label || areaSourceRef.current === "manual" || areaSourceRef.current === "voice") return;
+              areaSourceRef.current = "browser";
+              areaRef.current = label;
+              setArea(label);
+            })
+            .catch(() => {
+              // Location coordinates are still available even if the readable label fails.
+            });
           resolve(next);
         },
         () => {
           setLocationStatus("fallback");
+          locationStatusRef.current = "fallback";
           resolve(null);
         },
         { enableHighAccuracy: false, maximumAge: 300000, timeout: 8000 },
@@ -213,7 +239,8 @@ export function VoiceExperience() {
     setIsSearching(true);
     try {
       const areaText = area.trim();
-      const latestLocation = areaText ? null : location ?? (await withLocationTimeout(requestLocation(), () => setLocationStatus("fallback")));
+      const isBrowserArea = areaSourceRef.current === "browser";
+      const latestLocation = areaText && !isBrowserArea ? null : location ?? (await withLocationTimeout(requestLocation(), () => setLocationStatus("fallback")));
       const response = await fetch("/api/recommendation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -221,7 +248,7 @@ export function VoiceExperience() {
           query: query.trim() || userText.trim() || "restaurants",
           latitude: latestLocation?.latitude,
           longitude: latestLocation?.longitude,
-          area: areaText || userText,
+          area: isBrowserArea ? userText : areaText || userText,
           budget,
           partySize,
           dietary: dietary.trim() || undefined,
@@ -251,6 +278,7 @@ export function VoiceExperience() {
     const latestLocation = locationRef.current;
     const spokenArea = typeof args.area === "string" ? args.area.trim() : "";
     const currentArea = areaRef.current.trim();
+    const isBrowserArea = areaSourceRef.current === "browser";
     const nextArea = spokenArea || currentArea || userText.trim();
     const nextBudget = args.budget ?? budget;
     const nextPartySize =
@@ -259,6 +287,7 @@ export function VoiceExperience() {
         : partySize;
     const nextDietary = typeof args.dietary === "string" && args.dietary.trim() ? args.dietary.trim() : dietary.trim() || undefined;
     if (spokenArea) {
+      areaSourceRef.current = "voice";
       areaRef.current = spokenArea;
       setArea(spokenArea);
       setLocation(null);
@@ -277,7 +306,7 @@ export function VoiceExperience() {
           query: args.query ?? (query.trim() || userText.trim() || "restaurants"),
           latitude: args.latitude ?? (spokenArea ? undefined : latestLocation?.latitude),
           longitude: args.longitude ?? (spokenArea ? undefined : latestLocation?.longitude),
-          area: nextArea,
+          area: isBrowserArea && !spokenArea ? undefined : nextArea,
           budget: nextBudget,
           partySize: nextPartySize,
           dietary: nextDietary,
@@ -335,7 +364,8 @@ export function VoiceExperience() {
     activeReplyEpochRef.current = -1;
     conversationEpochRef.current += 1;
     try {
-      if (!locationRef.current) {
+      const typedArea = areaRef.current.trim();
+      if (!typedArea && !locationRef.current && locationStatusRef.current === "idle" && !locationRequestAttemptedRef.current) {
         await withLocationTimeout(requestLocation(), () => setLocationStatus("fallback"), 3500);
       }
       const response = await fetch("/api/voice-token", { cache: "no-store" });
@@ -359,11 +389,18 @@ export function VoiceExperience() {
         if (ready.current && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "input.audio", audio: toBase64(event.data) }));
       };
       socket.onopen = () => {
+        const browserLocationReady = Boolean(locationRef.current);
+        const currentArea = areaRef.current.trim();
+        const locationInstruction = browserLocationReady
+          ? "Browser location permission is already granted and coordinates are available in the app. Do not ask the user for their location again. If the user asks for food without naming a place, call get_recommendation with the food query and let the app attach the browser coordinates."
+          : currentArea
+            ? `The current typed/spoken search area is "${currentArea}". Treat it as the location unless the user changes it. Do not ask for location again unless the user's request needs a different area.`
+            : "If no browser location or area is available, ask for the user's area once, briefly.";
         const session = storedAgentId
           ? { agent_id: storedAgentId }
           : {
               system_prompt:
-                "You are DecideEats, a concise restaurant decision assistant. Keep spoken replies short so the user can interrupt naturally. Ask only one missing essential at a time, such as cuisine, budget, party size, location, or dietary constraints. When the user says where they live, where they are, or names a city/suburb/state such as Miri, Sarawak, put that place in the get_recommendation area field exactly and treat it as the current search area unless the user later changes it. When the user says how many people are eating, such as 'for 3 people', 'two of us', or '三个人吃', put the number in partySize. When the user gives a food preference or rejects a pick, call get_recommendation. Use the returned JSON to recommend one clear pick and explain why in one or two sentences. Never invent restaurant facts outside the tool result.",
+                `You are DecideEats, a concise restaurant decision assistant. Keep spoken replies short so the user can interrupt naturally. ${locationInstruction} Ask only one missing essential at a time, such as cuisine, budget, party size, or dietary constraints. When the user says where they live, where they are, or names a city/suburb/state such as Miri, Sarawak, put that place in the get_recommendation area field exactly and treat it as the current search area unless the user later changes it. When the user says how many people are eating, such as 'for 3 people', 'two of us', or '三个人吃', put the number in partySize. When the user gives a food preference or rejects a pick, call get_recommendation. Use the returned JSON to recommend one clear pick and explain why in one or two sentences. Never invent restaurant facts outside the tool result.`,
               greeting: "Hi, I'm DecideEats. Tell me what you feel like eating.",
               input: { format: { encoding: "audio/pcm" } },
               output: { voice: "alba", format: { encoding: "audio/pcm" }, volume: 100 },
@@ -442,10 +479,16 @@ export function VoiceExperience() {
   useEffect(() => () => stop(), [stop]);
   useEffect(() => {
     locationRef.current = location;
+    if (location) {
+      locationStatusRef.current = "ready";
+    }
   }, [location]);
   useEffect(() => {
     areaRef.current = area;
   }, [area]);
+  useEffect(() => {
+    locationStatusRef.current = locationStatus;
+  }, [locationStatus]);
   useEffect(() => {
     rejectedIdsRef.current = rejectedIds;
   }, [rejectedIds]);
@@ -576,7 +619,9 @@ export function VoiceExperience() {
                 <input
                   value={area}
                   onChange={(event) => {
+                    areaSourceRef.current = event.target.value.trim() ? "manual" : "empty";
                     setArea(event.target.value);
+                    areaRef.current = event.target.value;
                     setLocationStatus("idle");
                   }}
                   placeholder="Miri, Kota Kinabalu, Kulai..."

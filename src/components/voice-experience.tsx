@@ -135,6 +135,7 @@ export function VoiceExperience() {
   const [area, setArea] = useState("");
   const [areaSource, setAreaSource] = useState<AreaSource>("empty");
   const [expandedPlaceId, setExpandedPlaceId] = useState<string | null>(null);
+  const [deliveryOpen, setDeliveryOpen] = useState(false);
   const [brainOpen, setBrainOpen] = useState(false);
   const [brainSteps, setBrainSteps] = useState<BrainStep[]>([
     { id: 1, label: "Ready", detail: "Waiting for a craving, area, budget, people count, and dietary needs." },
@@ -303,6 +304,7 @@ export function VoiceExperience() {
       setRecommendationNote(responseNote(payload));
       addBrainStep("Result", `${payload.recommendations.length} places returned. Picked ${payload.decision?.name ?? payload.recommendations[0]?.name ?? "a match"}.`);
       setExpandedPlaceId(null);
+      setDeliveryOpen(false);
     } catch (caught) {
       setRecommendationError(caught instanceof Error ? caught.message : "Unable to search restaurants.");
     } finally {
@@ -363,6 +365,7 @@ export function VoiceExperience() {
         setRecommendationNote(responseNote(result) || "Voice agent searched restaurants.");
         addBrainStep("Tool result", `${result.recommendations.length} places returned. Picked ${result.decision?.name ?? result.recommendations[0]?.name ?? "a match"}.`);
         setExpandedPlaceId(null);
+        setDeliveryOpen(false);
       }
     } catch {
       pendingToolResults.current.push({ call_id: message.call_id, result: { error: "Restaurant search is unavailable." } });
@@ -387,6 +390,7 @@ export function VoiceExperience() {
     rejectedIdsRef.current = nextRejectedIds;
     setRejectedIds(nextRejectedIds);
     setDecision(null);
+    setDeliveryOpen(false);
     setRecommendations((items) => items.filter((item) => item.id !== decision.id));
     setRecommendationNote(`Skipped ${decision.name}. Searching for the next best pick.`);
     addBrainStep("Skip", `User skipped ${decision.name}; searching for another option.`);
@@ -689,11 +693,12 @@ export function VoiceExperience() {
                           <MapPinned />
                           Directions
                         </a>
-                        <div className="delivery-menu">
-                          <span>
+                        <div className={`delivery-menu ${deliveryOpen ? "delivery-menu-open" : ""}`}>
+                          <button type="button" onClick={() => setDeliveryOpen((open) => !open)} aria-expanded={deliveryOpen}>
                             <ShoppingBag />
                             Delivery
-                          </span>
+                            <ChevronDown />
+                          </button>
                           <div>
                             {deliveryLinks.map((link) => (
                               <a key={link.label} href={link.url} target="_blank" rel="noreferrer">

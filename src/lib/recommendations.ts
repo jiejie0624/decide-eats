@@ -195,7 +195,8 @@ export function demoRecommendations(request: RecommendationRequest, note?: strin
   const ranked = demoPlaces.filter((place) => !rejectedIds.has(place.id)).map((place) => {
     const keywordBoost = place.category.toLowerCase().includes(query) || query.includes(place.category.toLowerCase()) ? 0.4 : 0;
     const rating = place.rating ?? 8;
-    return withPriceGuidance({ ...place, rating: Math.min(9.5, rating + keywordBoost) }, request);
+    const result = withPriceGuidance({ ...place, rating: Math.min(9.5, rating + keywordBoost) }, request);
+    return { ...result, reason: scoreReason(result, request) };
   });
 
   return {
@@ -212,15 +213,32 @@ export function demoRecommendations(request: RecommendationRequest, note?: strin
 
 export function scoreReason(place: Recommendation, request: RecommendationRequest) {
   const craving = interpretCraving(request.query, request.dietary);
-  const parts = [craving.intent ? `Matches your ${craving.intent} craving` : `Matches "${normalizeQuery(request.query)}"`];
-  if (place.distanceMeters) parts.push(`${Math.round(place.distanceMeters)}m away`);
-  if (place.priceLabel) parts.push(`${place.priceLabel}${place.priceNote?.includes("estimated") ? " est." : ""}`);
-  if (place.budgetFit === "good") parts.push("fits budget");
-  if (place.budgetFit === "stretch") parts.push("may stretch budget");
-  if (place.rating) parts.push(`${place.rating.toFixed(1)}/10 rating`);
-  if (request.partySize && request.partySize > 2) parts.push("reasonable group pick");
-  if (request.dietary) parts.push(`dietary note: ${request.dietary}`);
-  return parts.join(" · ");
+  const seed = `${place.id}-${request.query}-${request.budget ?? ""}-${request.partySize ?? ""}-${new Date().getMinutes()}`;
+  const pick = <T,>(items: T[], offset = 0) => items[(Array.from(seed).reduce((sum, char) => sum + char.charCodeAt(0), 0) + offset) % items.length];
+  const cravingLine = craving.intent
+    ? pick([
+        `It fits the ${craving.intent} mood you described without making the choice feel too random.`,
+        `This is a strong match for your ${craving.intent} craving, so it should feel closer to what you actually asked for.`,
+        `I picked it because your request sounds more like ${craving.intent} than a specific dish.`,
+      ])
+    : pick([
+        `It lines up well with “${normalizeQuery(request.query)}” and keeps the decision simple.`,
+        `This feels like the safest match for what you asked, without sending you through ten options.`,
+        `It is a direct fit for your craving and should be easy to agree on.`,
+      ]);
+
+  const valueLines = [
+    place.budgetFit === "good" && place.priceLabel ? `The price looks reasonable for your budget at around ${place.priceLabel}.` : "",
+    place.budgetFit === "stretch" && place.priceLabel ? `It may cost a little more at around ${place.priceLabel}, but it looks more worthwhile than a random cheap pick.` : "",
+    place.distanceMeters ? `It is also close enough at about ${Math.round(place.distanceMeters)}m away, so you do not waste time traveling.` : "",
+    place.rating ? `The rating signal is decent too, so it is not just a random nearby place.` : "",
+    request.partySize && request.partySize > 2 ? `For ${request.partySize} people, it feels like a safer group choice than something too niche.` : "",
+    request.dietary ? `It also tries to respect your ${request.dietary} preference.` : "",
+    `It gives a good balance between taste, convenience, and effort.`,
+    `It feels like the kind of place that can satisfy the craving without overcomplicating dinner.`,
+  ].filter(Boolean);
+
+  return `${cravingLine} ${pick(valueLines, 17)}`;
 }
 
 export function rankRecommendations(places: Recommendation[], request: RecommendationRequest) {

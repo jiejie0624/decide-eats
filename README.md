@@ -1,94 +1,165 @@
 # DecideEats
 
-Voice-first restaurant decisions powered by AssemblyAI.
+<p align="center">
+  <img src="./public/brand/decideeats-cover.png" alt="DecideEats cover" width="900" />
+</p>
 
-[Live demo](https://decide-eats.vercel.app/) · [GitHub repo](https://github.com/jiejie0624/decide-eats)
+<p align="center">
+  <strong>Search gives you options. DecideEats gives your group a decision.</strong>
+</p>
 
-## Overview
+<p align="center">
+  A voice-first food decision agent built with AssemblyAI Voice Agent API for the lablab.ai AssemblyAI Voice Agent Hackathon.
+</p>
 
-DecideEats helps people choose where to eat without opening ten tabs or scrolling through endless restaurant lists.
+<p align="center">
+  <a href="https://decide-eats.vercel.app/"><strong>Live Demo</strong></a>
+  ·
+  <a href="https://github.com/jiejie0624/decide-eats"><strong>GitHub</strong></a>
+  ·
+  <a href="#demo-flow"><strong>Demo Flow</strong></a>
+  ·
+  <a href="#local-development"><strong>Run Locally</strong></a>
+</p>
 
-Users can speak naturally:
+<p align="center">
+  <img alt="Next.js" src="https://img.shields.io/badge/Next.js-16-black?style=for-the-badge&logo=nextdotjs" />
+  <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=111" />
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-Ready-3178C6?style=for-the-badge&logo=typescript&logoColor=white" />
+  <img alt="AssemblyAI" src="https://img.shields.io/badge/AssemblyAI-Voice%20Agent-6C5CE7?style=for-the-badge" />
+  <img alt="Vercel" src="https://img.shields.io/badge/Deploy-Vercel-black?style=for-the-badge&logo=vercel" />
+</p>
 
-> “I live in Miri, Sarawak. I want nasi lemak for four people.”
+## What is DecideEats?
 
-The app listens, extracts the important context, updates the visible form, searches nearby restaurants, estimates the price range, and returns one clear pick with Google Maps directions.
+DecideEats is a voice-first restaurant decision assistant for people who are tired of asking, “So... what do we eat?”
 
-Built for the [AssemblyAI Voice Agent Hackathon](https://lablab.ai/ai-hackathons/assemblyai-voice-agent-hackathon) by lablab.ai.
+Instead of returning another long list, DecideEats listens to a natural request, asks only the missing questions, searches nearby restaurants, weighs real constraints, and returns one clear pick with directions and delivery handoff.
+
+It is designed for messy, real-life food decisions:
+
+> “I want makan something pedas near Miri lah, four people, easy budget, halal.”
 
 ## Why it matters
 
-Choosing a restaurant is rarely a clean search query. People mention cravings, location, budget, group size, and dietary needs in one messy sentence.
+Choosing food is rarely a clean search query. People mix cravings, location, budget, group size, dietary needs, and language in one sentence.
 
-DecideEats turns that conversation into a decision:
+DecideEats turns that messy conversation into a decision layer:
 
-- One recommended restaurant, not a long list
-- Location-aware search using browser permission or spoken area
-- Visible fields that stay editable after voice input
-- Estimated RM price ranges and budget fit
-- Directions that open directly in Google Maps
-
-## Features
-
-| Area | What DecideEats does |
+| User problem | DecideEats response |
 |---|---|
-| Voice input | Starts an AssemblyAI Voice Agent session from the browser |
-| Permission flow | Requests location permission when the user taps the microphone |
-| Form sync | Updates Area, People, Budget, and Dietary fields from speech |
-| Restaurant search | Uses Foursquare Places for live nearby restaurant candidates |
-| Price guidance | Shows estimated RM price ranges when provider pricing is missing |
-| Decision flow | Highlights one pick and supports skipping to the next option |
-| Navigation | Opens Google Maps Directions with the resolved origin and destination |
+| Too many restaurant options | Returns one best pick, plus backups |
+| Group preferences are messy | Considers people count, budget, dietary needs, and craving |
+| Voice agents feel like black boxes | Shows an Agent Brain panel with tool activity |
+| Local users mix languages | Supports English, Bahasa Melayu, Manglish, and Chinese-style phrases |
+| Decision needs action | Opens Google Maps or hands off to Foodpanda / GrabFood / delivery search |
+
+## Highlights
+
+| Feature | Why it matters |
+|---|---|
+| **AssemblyAI Voice Agent API** | Real-time conversational voice experience in the browser |
+| **Barge-in interruption** | Users can interrupt naturally instead of waiting for the agent to finish |
+| **JSON tool calling** | Voice requests trigger a real recommendation tool, not just text generation |
+| **Agent Brain panel** | Makes the agent’s reasoning and tool flow visible for judges and users |
+| **Multilingual / Manglish support** | Understands local phrases like `makan`, `pedas`, `murah`, `辣的`, `便宜` |
+| **Smarter ranking** | Uses craving, area, budget, people count, dietary needs, distance, and price estimate |
+| **Local currency estimates** | Shows price ranges using the likely currency for the user’s area |
+| **Delivery handoff** | Links the chosen restaurant to Foodpanda, GrabFood, or Google delivery search |
+| **Google Maps directions** | Moves from decision to action immediately |
 
 ## Demo flow
 
-1. Open the live demo.
+Try this flow in the live demo:
+
+1. Open [decide-eats.vercel.app](https://decide-eats.vercel.app/).
 2. Tap the microphone.
-3. Allow location and microphone access.
-4. Say: “I live in Miri, Sarawak. I want nasi lemak for four people.”
-5. DecideEats updates the form and recommends one restaurant.
-6. Tap Directions to open the route in Google Maps.
+3. Allow microphone and location permission.
+4. Say:
+
+   ```text
+   I am in Miri. I want something spicy, four people, easy budget, halal.
+   ```
+
+5. DecideEats fills the visible fields, calls the recommendation tool, and shows one pick.
+6. Open **Agent Brain** to see what the voice agent did.
+7. Use **Directions** or **Delivery** to continue.
+
+## Product behavior
+
+DecideEats is intentionally not a normal restaurant search app.
+
+```text
+Search app:
+  query -> many places -> user compares everything
+
+DecideEats:
+  voice conversation -> constraints -> tool call -> ranked options -> one decision
+```
+
+The app prioritizes user intent in this order:
+
+1. Manual area typed by the user
+2. Area spoken by the user
+3. Browser GPS location
+4. Safe fallback area for demo resilience
+
+## How it works
+
+```mermaid
+flowchart LR
+  A[User voice] --> B[Browser microphone]
+  B --> C[AudioWorklet PCM capture]
+  C --> D[AssemblyAI Voice Agent WebSocket]
+  D --> E[JSON tool call: get_recommendation]
+  E --> F[Next.js API route]
+  F --> G[Foursquare Places API]
+  F --> H[Craving + budget + dietary ranking]
+  H --> I[One recommended pick]
+  I --> J[Agent Brain + UI cards]
+  I --> K[Google Maps directions]
+  I --> L[Delivery handoff]
+```
+
+### AssemblyAI usage
+
+DecideEats uses AssemblyAI as the core voice layer:
+
+- Voice Agent API session
+- Real-time voice interaction
+- Browser audio streaming over WebSocket
+- Turn-taking and natural interruption
+- JSON-schema tool calling
+- Spoken responses connected to live UI state
 
 ## Tech stack
 
-- **Frontend:** Next.js, React, TypeScript, CSS
-- **Voice AI:** AssemblyAI Voice Agent
-- **Places data:** Foursquare Places API
-- **Directions:** Google Maps Directions links
-- **Deployment:** Vercel
-
-## Architecture
-
-```text
-User voice
-  -> Browser microphone
-  -> AudioWorklet PCM capture
-  -> AssemblyAI Voice Agent WebSocket
-  -> get_recommendation tool call
-  -> Next.js /api/recommendation
-  -> Foursquare Places API
-  -> Ranked restaurant result
-  -> UI update + spoken response
-  -> Google Maps Directions
-```
-
-Server-only API keys stay in backend routes. The browser receives a short-lived AssemblyAI token and never receives permanent provider secrets.
+| Layer | Technology |
+|---|---|
+| App framework | Next.js App Router |
+| UI | React, TypeScript, CSS |
+| Voice AI | AssemblyAI Voice Agent API |
+| Audio capture | Browser microphone + AudioWorklet PCM processor |
+| Places data | Foursquare Places API |
+| Navigation | Google Maps Directions links |
+| Delivery | Foodpanda / GrabFood / Google delivery search handoff |
+| Hosting | Vercel |
 
 ## Local development
 
-Clone the project and install dependencies:
+Install dependencies:
 
 ```bash
 npm install
 ```
 
-Create a local environment file:
+Create your local environment file:
 
 ```bash
 cp .env.example .env.local
 ```
 
-Add your own keys:
+Add your own API keys:
 
 ```bash
 ASSEMBLYAI_API_KEY=your_assemblyai_key
@@ -115,8 +186,8 @@ http://localhost:3000
 
 | Variable | Required | Purpose |
 |---|---:|---|
-| `ASSEMBLYAI_API_KEY` | Yes | Creates temporary voice session tokens |
-| `FOURSQUARE_API_KEY` | Yes for live data | Searches live restaurant places |
+| `ASSEMBLYAI_API_KEY` | Yes | Creates short-lived voice session tokens |
+| `FOURSQUARE_API_KEY` | Yes for live places | Searches live nearby restaurants |
 | `FOURSQUARE_API_VERSION` | Recommended | Pins the Foursquare Places API version |
 | `DEFAULT_SEARCH_LATITUDE` | Optional | Fallback search latitude |
 | `DEFAULT_SEARCH_LONGITUDE` | Optional | Fallback search longitude |
@@ -125,40 +196,51 @@ http://localhost:3000
 
 Do not prefix secret API keys with `NEXT_PUBLIC_`.
 
-## Deployment
-
-The app deploys as a standard Next.js project on Vercel.
-
-1. Import the GitHub repository into Vercel.
-2. Add the environment variables listed above.
-3. Deploy the `master` branch.
-4. Test the live URL with microphone and location permission enabled.
-
-When environment variables change, redeploy the latest deployment so the server routes receive the new values.
-
 ## Verification
 
-Run these checks before submitting:
+Before submitting or deploying:
 
 ```bash
 npm run lint
 npm run build
 ```
 
-## Hackathon submission checklist
+## Deployment
 
-- [x] Uses AssemblyAI Voice Agent
-- [x] Working web prototype
-- [x] GitHub repository
-- [x] Vercel deployment
-- [x] Live restaurant search
-- [x] Google Maps directions
-- [x] Pitch deck
-- [ ] Demo video
-- [ ] Final lablab.ai submission
+The app deploys as a standard Next.js project on Vercel.
 
-## Project status
+1. Import the GitHub repository into Vercel.
+2. Add the environment variables above.
+3. Deploy the `master` branch.
+4. Test the live URL with microphone and location permission enabled.
 
-DecideEats is a working hackathon prototype. The current version focuses on a fast voice-driven decision loop: speak, resolve location and constraints, choose one restaurant, and open directions.
+## Hackathon positioning
 
-Future improvements could add stronger price confidence, saved user preferences, group voting, opening-hours filtering, and mobile PWA polish.
+DecideEats was built for the [AssemblyAI Voice Agent Hackathon](https://lablab.ai/ai-hackathons/assemblyai-voice-agent-hackathon) by lablab.ai.
+
+The project is positioned as a **voice-first food decision agent**, not just a restaurant finder.
+
+| Judging angle | What DecideEats shows |
+|---|---|
+| Application of technology | AssemblyAI Voice Agent, tool calling, interruption, live UI sync |
+| Business value | Faster group food decisions, delivery/maps handoff, food platform potential |
+| Originality | Agent Brain, Manglish/Chinese/BM support, group-aware decision logic |
+| Presentation | Polished glass UI, mobile-ready flow, clear demo story |
+
+## Roadmap
+
+- Deeper group decision mode with one profile per friend
+- Saved taste memory and rejected restaurant history
+- Stronger restaurant availability / open-now signals
+- Direct booking or delivery integrations with official partners
+- More robust local language and dish keyterms
+
+## Security notes
+
+- Permanent provider secrets stay in server-side API routes.
+- The browser receives only short-lived AssemblyAI voice tokens.
+- `.env.local` is ignored and should never be committed.
+
+## Status
+
+DecideEats is a working hackathon prototype with a deployed web app, live restaurant search, voice interaction, visible agent reasoning, Google Maps directions, and delivery handoff.

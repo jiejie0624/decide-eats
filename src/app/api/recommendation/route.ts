@@ -87,37 +87,6 @@ function findKnownArea(text: string) {
 }
 
 async function geocodeArea(area: string): Promise<GeocodedArea | null> {
-  const googleApiKey = process.env.GOOGLE_MAPS_API_KEY;
-  if (googleApiKey) {
-    const googleEndpoint = new URL("https://maps.googleapis.com/maps/api/geocode/json");
-    googleEndpoint.searchParams.set("address", area);
-    googleEndpoint.searchParams.set("key", googleApiKey);
-    try {
-      const googleResponse = await fetch(googleEndpoint, { cache: "no-store" });
-      if (googleResponse.ok) {
-        const googlePayload = (await googleResponse.json()) as {
-          status?: string;
-          results?: Array<{
-            formatted_address?: string;
-            geometry?: { location?: { lat?: number; lng?: number } };
-          }>;
-        };
-        const first = googlePayload.status === "OK" ? googlePayload.results?.[0] : null;
-        const latitude = first?.geometry?.location?.lat;
-        const longitude = first?.geometry?.location?.lng;
-        if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
-          return {
-            label: first?.formatted_address ?? area,
-            latitude: latitude as number,
-            longitude: longitude as number,
-          };
-        }
-      }
-    } catch {
-      // Fall back to the free geocoder below.
-    }
-  }
-
   const endpoint = new URL("https://nominatim.openstreetmap.org/search");
   endpoint.searchParams.set("format", "jsonv2");
   endpoint.searchParams.set("limit", "1");
@@ -139,6 +108,35 @@ async function geocodeArea(area: string): Promise<GeocodedArea | null> {
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
     return {
       label: first.display_name ?? area,
+      latitude,
+      longitude,
+    };
+  } catch {
+    // Try the secondary public geocoder below.
+  }
+
+  const photonEndpoint = new URL("https://photon.komoot.io/api/");
+  photonEndpoint.searchParams.set("q", area);
+  photonEndpoint.searchParams.set("limit", "1");
+  try {
+    const response = await fetch(photonEndpoint, { cache: "no-store" });
+    if (!response.ok) return null;
+    const payload = (await response.json()) as {
+      features?: Array<{
+        geometry?: { coordinates?: [number, number] };
+        properties?: { name?: string; city?: string; state?: string; country?: string };
+      }>;
+    };
+    const first = payload.features?.[0];
+    const [longitudeRaw, latitudeRaw] = first?.geometry?.coordinates ?? [];
+    const latitude = Number(latitudeRaw);
+    const longitude = Number(longitudeRaw);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+    return {
+      label: [first?.properties?.name, first?.properties?.city, first?.properties?.state, first?.properties?.country]
+        .filter(Boolean)
+        .filter((value, index, values) => values.indexOf(value) === index)
+        .join(", ") || area,
       latitude,
       longitude,
     };

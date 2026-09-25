@@ -192,7 +192,6 @@ http://localhost:3000
 | `DEFAULT_SEARCH_LATITUDE` | Optional | Fallback search latitude |
 | `DEFAULT_SEARCH_LONGITUDE` | Optional | Fallback search longitude |
 | `DEFAULT_SEARCH_LABEL` | Optional | Fallback search label |
-| `NEXT_PUBLIC_ASSEMBLYAI_AGENT_ID` | Optional | Uses a stored AssemblyAI agent instead of the inline session config |
 
 Do not prefix secret API keys with `NEXT_PUBLIC_`.
 

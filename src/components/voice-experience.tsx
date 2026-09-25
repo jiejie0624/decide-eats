@@ -22,7 +22,6 @@ type AgentEvent = {
   arguments?: ToolArguments | string;
 };
 
-const storedAgentId = process.env.NEXT_PUBLIC_ASSEMBLYAI_AGENT_ID;
 const budgetOptions: Array<{ value: Budget; label: string }> = [
   { value: "low", label: "Easy" },
   { value: "medium", label: "Comfort" },
@@ -194,6 +193,7 @@ export function VoiceExperience() {
   const [toolStatus, setToolStatus] = useState("");
   const [budget, setBudget] = useState<Budget>("medium");
   const [partySize, setPartySize] = useState(2);
+  const [, setPartySizeKnown] = useState(false);
   const [dietary, setDietary] = useState("");
   const [area, setArea] = useState("");
   const [areaSource, setAreaSource] = useState<AreaSource>("empty");
@@ -218,6 +218,7 @@ export function VoiceExperience() {
   const areaSourceRef = useRef<AreaSource>("empty");
   const locationStatusRef = useRef<"idle" | "asking" | "ready" | "fallback">("idle");
   const locationRequestAttemptedRef = useRef(false);
+  const partySizeKnownRef = useRef(false);
   const userSpeakingRef = useRef(false);
   const conversationEpochRef = useRef(0);
   const activeReplyEpochRef = useRef(-1);
@@ -231,6 +232,16 @@ export function VoiceExperience() {
 
   const addBrainStep = useCallback((label: string, detail: string) => {
     setBrainSteps((steps) => [...steps, { id: Date.now() + steps.length, label, detail }].slice(-6));
+  }, []);
+
+  const updatePartySize = useCallback((value: number, known = true) => {
+    const nextValue = Math.max(1, Math.min(12, Math.round(value) || 1));
+    setPartySize(nextValue);
+    if (known) {
+      partySizeKnownRef.current = true;
+      setPartySizeKnown(true);
+    }
+    return nextValue;
   }, []);
 
   const clearPlayback = useCallback(() => {
@@ -363,7 +374,7 @@ export function VoiceExperience() {
   const applyTranscriptHints = useCallback((text: string) => {
     const nextPartySize = extractPartySize(text);
     if (nextPartySize) {
-      setPartySize(nextPartySize);
+      updatePartySize(nextPartySize);
       addBrainStep("People", `Detected ${nextPartySize} ${nextPartySize === 1 ? "person" : "people"} from your voice.`);
     }
 
@@ -383,7 +394,7 @@ export function VoiceExperience() {
       setLocationStatus("idle");
       void resolveSpokenArea(spokenArea);
     }
-  }, [addBrainStep, resolveSpokenArea, updateAreaSource]);
+  }, [addBrainStep, resolveSpokenArea, updateAreaSource, updatePartySize]);
 
   const findRecommendations = useCallback(async () => {
     setRecommendationError("");
@@ -454,7 +465,7 @@ export function VoiceExperience() {
     }
     if (args.query) setQuery(args.query);
     if (args.budget) setBudget(args.budget);
-    if (typeof args.partySize === "number" && Number.isFinite(args.partySize)) setPartySize(nextPartySize);
+    if (typeof args.partySize === "number" && Number.isFinite(args.partySize)) updatePartySize(nextPartySize);
     if (typeof args.dietary === "string" && args.dietary.trim()) setDietary(args.dietary.trim());
     try {
       const response = await fetch("/api/recommendation", {
@@ -490,7 +501,7 @@ export function VoiceExperience() {
     } finally {
       setToolStatus("Search result ready for the voice agent.");
     }
-  }, [addBrainStep, budget, dietary, partySize, query, resolveSpokenArea, updateAreaSource, userText]);
+  }, [addBrainStep, budget, dietary, partySize, query, resolveSpokenArea, updateAreaSource, updatePartySize, userText]);
 
   const flushToolResults = useCallback((socket: WebSocket) => {
     if (socket.readyState !== WebSocket.OPEN || pendingToolResults.current.length === 0) return;
@@ -555,14 +566,23 @@ export function VoiceExperience() {
       socket.onopen = () => {
         const browserLocationReady = Boolean(locationRef.current);
         const currentArea = areaRef.current.trim();
+        const currentPartySizeKnown = partySizeKnownRef.current;
         const locationInstruction = browserLocationReady
-          ? "Browser location permission is already granted and coordinates are available in the app. Do not ask the user for their location again. If the user asks for food without naming a place, call get_recommendation with the food query and let the app attach the browser coordinates."
+          ? `Area is confirmed from browser location${currentArea ? ` as "${currentArea}"` : ""}. Do not ask the user for their location again. If the user asks for food without naming a place, call get_recommendation with the food query and let the app attach the browser coordinates.`
           : currentArea
-            ? `The current typed/spoken search area is "${currentArea}". Treat it as the location unless the user changes it. Do not ask for location again unless the user's request needs a different area.`
+            ? `Area is confirmed as "${currentArea}". Treat it as the location unless the user changes it. Do not ask for location again unless the user's request needs a different area.`
             : "If no browser location or area is available, ask for the user's area once, briefly.";
-        const session = storedAgentId
-          ? { agent_id: storedAgentId }
-          : createInlineVoiceSession(locationInstruction);
+        const peopleInstruction = currentPartySizeKnown
+          ? `Party size is already confirmed as ${partySize} ${partySize === 1 ? "person" : "people"}. Do not ask how many people again.`
+          : "Party size is not confirmed yet. The visible value 2 is only a default placeholder, so ask whether it is for the user alone or how many people if the user has not said it.";
+        const budgetInstruction = `Budget is currently set to ${budget}. You may use it unless the user changes it.`;
+        const contextInstruction = `${locationInstruction} ${peopleInstruction} ${budgetInstruction}`;
+        const greeting = currentArea || browserLocationReady
+          ? currentPartySizeKnown
+            ? "Got it. What are you craving?"
+            : "Got the area. What are you craving, and how many people?"
+          : "What are you craving, and which area should I search?";
+        const session = createInlineVoiceSession(contextInstruction, greeting);
         socket.send(JSON.stringify({ type: "session.update", session }));
       };
       socket.onmessage = (event) => {
@@ -613,7 +633,7 @@ export function VoiceExperience() {
       stream.current?.getTracks().forEach((track) => track.stop());
       void context.current?.close();
     }
-  }, [addBrainStep, applyTranscriptHints, clearPlayback, flushToolResults, play, requestLocation, runRecommendationTool]);
+  }, [addBrainStep, applyTranscriptHints, budget, clearPlayback, flushToolResults, partySize, play, requestLocation, runRecommendationTool]);
 
   useEffect(() => () => stop(), [stop]);
   useEffect(() => {
@@ -751,7 +771,7 @@ export function VoiceExperience() {
               </div>
               <label>
                 <span>People</span>
-                <input type="number" min={1} max={12} value={partySize} onChange={(event) => setPartySize(Math.max(1, Math.min(12, Number(event.target.value) || 1)))} />
+                <input type="number" min={1} max={12} value={partySize} onChange={(event) => updatePartySize(Number(event.target.value) || 1)} />
               </label>
               <label>
                 <span>Dietary</span>

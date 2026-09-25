@@ -77,7 +77,7 @@ function directionsUrl(place: Recommendation, origin?: string) {
 function deliverySearchLinks(place: Recommendation, area?: string) {
   const search = [place.name, area, "delivery"].filter(Boolean).join(" ");
   return [
-    { label: "Foodpanda", url: `https://www.google.com/search?q=${encodeURIComponent(`Foodpanda ${search}`)}` },
+    { label: "Uber Eats", url: `https://www.google.com/search?q=${encodeURIComponent(`Uber Eats ${search}`)}` },
     { label: "GrabFood", url: `https://www.google.com/search?q=${encodeURIComponent(`GrabFood ${search}`)}` },
     { label: "Google", url: `https://www.google.com/search?q=${encodeURIComponent(search)}` },
   ];

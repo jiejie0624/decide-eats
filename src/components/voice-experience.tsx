@@ -184,7 +184,7 @@ export function VoiceExperience() {
   const [status, setStatus] = useState<Status>("idle");
   const [userText, setUserText] = useState("");
   const [agentText, setAgentText] = useState("");
-  const [query, setQuery] = useState("sushi for two");
+  const [query, setQuery] = useState("");
   const [error, setError] = useState("");
   const [recommendationError, setRecommendationError] = useState("");
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
@@ -224,6 +224,7 @@ export function VoiceExperience() {
   const partySizeKnownRef = useRef(false);
   const budgetKnownRef = useRef(false);
   const dietaryKnownRef = useRef(false);
+  const cravingKnownRef = useRef(false);
   const userSpeakingRef = useRef(false);
   const conversationEpochRef = useRef(0);
   const activeReplyEpochRef = useRef(-1);
@@ -257,6 +258,11 @@ export function VoiceExperience() {
   const updateDietary = useCallback((value: string, known = true) => {
     setDietary(value);
     dietaryKnownRef.current = known && value.trim().length > 0;
+  }, []);
+
+  const updateQuery = useCallback((value: string, known = true) => {
+    setQuery(value);
+    cravingKnownRef.current = known && value.trim().length > 0;
   }, []);
 
   const clearPlayback = useCallback(() => {
@@ -478,7 +484,7 @@ export function VoiceExperience() {
         setLocationStatus("idle");
       }
     }
-    if (args.query) setQuery(args.query);
+    if (args.query) updateQuery(args.query);
     if (args.budget) updateBudget(args.budget);
     if (typeof args.partySize === "number" && Number.isFinite(args.partySize)) updatePartySize(nextPartySize);
     if (typeof args.dietary === "string" && args.dietary.trim()) updateDietary(args.dietary.trim());
@@ -516,7 +522,7 @@ export function VoiceExperience() {
     } finally {
       setToolStatus("Search result ready for the voice agent.");
     }
-  }, [addBrainStep, budget, dietary, partySize, query, resolveSpokenArea, updateAreaSource, updateBudget, updateDietary, updatePartySize, userText]);
+  }, [addBrainStep, budget, dietary, partySize, query, resolveSpokenArea, updateAreaSource, updateBudget, updateDietary, updatePartySize, updateQuery, userText]);
 
   const flushToolResults = useCallback((socket: WebSocket) => {
     if (socket.readyState !== WebSocket.OPEN || pendingToolResults.current.length === 0) return;
@@ -584,6 +590,7 @@ export function VoiceExperience() {
         const currentPartySizeKnown = partySizeKnownRef.current;
         const currentBudgetKnown = budgetKnownRef.current;
         const currentDietaryKnown = dietaryKnownRef.current;
+        const currentCravingKnown = cravingKnownRef.current;
         const locationInstruction = browserLocationReady
           ? `Area is confirmed from browser location${currentArea ? ` as "${currentArea}"` : ""}. Do not ask the user for their location again. If the user asks for food without naming a place, call get_recommendation with the food query and let the app attach the browser coordinates.`
           : currentArea
@@ -598,8 +605,12 @@ export function VoiceExperience() {
         const dietaryInstruction = currentDietaryKnown
           ? `Dietary needs are confirmed as "${dietary.trim()}". Do not ask dietary needs again unless the user changes them.`
           : "Dietary needs are not confirmed yet. Ask if the user needs halal, vegetarian, vegan, no pork, allergies, or no restrictions.";
-        const contextInstruction = `${locationInstruction} ${peopleInstruction} ${budgetInstruction} ${dietaryInstruction}`;
+        const cravingInstruction = currentCravingKnown
+          ? `Craving is confirmed as "${query.trim()}". Do not ask what they want to eat again unless they change it.`
+          : "Craving or dish is not confirmed yet. Ask what the user wants to eat before recommending.";
+        const contextInstruction = `${cravingInstruction} ${locationInstruction} ${peopleInstruction} ${budgetInstruction} ${dietaryInstruction}`;
         const missingQuestions = [
+          currentCravingKnown ? "" : "what you want to eat",
           currentArea || browserLocationReady ? "" : "which area",
           currentPartySizeKnown ? "" : "how many people",
           currentBudgetKnown ? "" : "easy, comfortable, or worth-it budget",
@@ -636,7 +647,7 @@ export function VoiceExperience() {
         else if (message.type === "transcript.user" && message.text) {
           userSpeakingRef.current = false;
           setUserText(message.text);
-          setQuery(message.text);
+          updateQuery(message.text);
           applyTranscriptHints(message.text);
           addBrainStep("Heard user", message.text);
         } else if (message.type === "transcript.agent" && message.text) setAgentText(message.text);
@@ -659,7 +670,7 @@ export function VoiceExperience() {
       stream.current?.getTracks().forEach((track) => track.stop());
       void context.current?.close();
     }
-  }, [addBrainStep, applyTranscriptHints, budget, clearPlayback, dietary, flushToolResults, partySize, play, requestLocation, runRecommendationTool]);
+  }, [addBrainStep, applyTranscriptHints, budget, clearPlayback, dietary, flushToolResults, partySize, play, query, requestLocation, runRecommendationTool, updateQuery]);
 
   useEffect(() => () => stop(), [stop]);
   useEffect(() => {
@@ -769,7 +780,7 @@ export function VoiceExperience() {
             </div>
 
             <div className="search-row">
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="pizza, ramen, halal dinner..." />
+              <input value={query} onChange={(event) => updateQuery(event.target.value, event.target.value.trim().length > 0)} placeholder="pizza, ramen, halal dinner..." />
               <button type="button" onClick={() => void findRecommendations()} disabled={isSearching}>
                 <Search />
                 {isSearching ? "Finding" : "Find"}

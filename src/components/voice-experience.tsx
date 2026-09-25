@@ -159,6 +159,9 @@ function extractBudget(text: string): Budget | null {
 }
 
 function extractDietary(text: string) {
+  if (/(no dietary|no restriction|no restrictions|anything is fine|no preference|都可以|没有忌口|沒有忌口|没忌口|無忌口|无忌口|不用清真|tak ada pantang|apa apa pun boleh)/i.test(text)) {
+    return "no restrictions";
+  }
   const matches = text.match(/(halal|vegan|vegetarian|gluten[- ]?free|no pork|no beef|allergy|allergic|清真|素食|不要猪肉|不要豬肉|不吃猪|不吃豬|tak makan babi|tak makan lembu)/gi);
   return matches ? Array.from(new Set(matches.map((item) => item.trim()))).join(", ") : "";
 }
@@ -219,6 +222,8 @@ export function VoiceExperience() {
   const locationStatusRef = useRef<"idle" | "asking" | "ready" | "fallback">("idle");
   const locationRequestAttemptedRef = useRef(false);
   const partySizeKnownRef = useRef(false);
+  const budgetKnownRef = useRef(false);
+  const dietaryKnownRef = useRef(false);
   const userSpeakingRef = useRef(false);
   const conversationEpochRef = useRef(0);
   const activeReplyEpochRef = useRef(-1);
@@ -242,6 +247,16 @@ export function VoiceExperience() {
       setPartySizeKnown(true);
     }
     return nextValue;
+  }, []);
+
+  const updateBudget = useCallback((value: Budget, known = true) => {
+    setBudget(value);
+    if (known) budgetKnownRef.current = true;
+  }, []);
+
+  const updateDietary = useCallback((value: string, known = true) => {
+    setDietary(value);
+    dietaryKnownRef.current = known && value.trim().length > 0;
   }, []);
 
   const clearPlayback = useCallback(() => {
@@ -379,10 +394,10 @@ export function VoiceExperience() {
     }
 
     const nextBudget = extractBudget(text);
-    if (nextBudget) setBudget(nextBudget);
+    if (nextBudget) updateBudget(nextBudget);
 
     const nextDietary = extractDietary(text);
-    if (nextDietary) setDietary(nextDietary);
+    if (nextDietary) updateDietary(nextDietary);
 
     const spokenArea = extractSpokenArea(text);
     if (spokenArea) {
@@ -394,7 +409,7 @@ export function VoiceExperience() {
       setLocationStatus("idle");
       void resolveSpokenArea(spokenArea);
     }
-  }, [addBrainStep, resolveSpokenArea, updateAreaSource, updatePartySize]);
+  }, [addBrainStep, resolveSpokenArea, updateAreaSource, updateBudget, updateDietary, updatePartySize]);
 
   const findRecommendations = useCallback(async () => {
     setRecommendationError("");
@@ -464,9 +479,9 @@ export function VoiceExperience() {
       }
     }
     if (args.query) setQuery(args.query);
-    if (args.budget) setBudget(args.budget);
+    if (args.budget) updateBudget(args.budget);
     if (typeof args.partySize === "number" && Number.isFinite(args.partySize)) updatePartySize(nextPartySize);
-    if (typeof args.dietary === "string" && args.dietary.trim()) setDietary(args.dietary.trim());
+    if (typeof args.dietary === "string" && args.dietary.trim()) updateDietary(args.dietary.trim());
     try {
       const response = await fetch("/api/recommendation", {
         method: "POST",
@@ -501,7 +516,7 @@ export function VoiceExperience() {
     } finally {
       setToolStatus("Search result ready for the voice agent.");
     }
-  }, [addBrainStep, budget, dietary, partySize, query, resolveSpokenArea, updateAreaSource, updatePartySize, userText]);
+  }, [addBrainStep, budget, dietary, partySize, query, resolveSpokenArea, updateAreaSource, updateBudget, updateDietary, updatePartySize, userText]);
 
   const flushToolResults = useCallback((socket: WebSocket) => {
     if (socket.readyState !== WebSocket.OPEN || pendingToolResults.current.length === 0) return;
@@ -567,6 +582,8 @@ export function VoiceExperience() {
         const browserLocationReady = Boolean(locationRef.current);
         const currentArea = areaRef.current.trim();
         const currentPartySizeKnown = partySizeKnownRef.current;
+        const currentBudgetKnown = budgetKnownRef.current;
+        const currentDietaryKnown = dietaryKnownRef.current;
         const locationInstruction = browserLocationReady
           ? `Area is confirmed from browser location${currentArea ? ` as "${currentArea}"` : ""}. Do not ask the user for their location again. If the user asks for food without naming a place, call get_recommendation with the food query and let the app attach the browser coordinates.`
           : currentArea
@@ -575,13 +592,22 @@ export function VoiceExperience() {
         const peopleInstruction = currentPartySizeKnown
           ? `Party size is already confirmed as ${partySize} ${partySize === 1 ? "person" : "people"}. Do not ask how many people again.`
           : "Party size is not confirmed yet. The visible value 2 is only a default placeholder, so ask whether it is for the user alone or how many people if the user has not said it.";
-        const budgetInstruction = `Budget is currently set to ${budget}. You may use it unless the user changes it.`;
-        const contextInstruction = `${locationInstruction} ${peopleInstruction} ${budgetInstruction}`;
-        const greeting = currentArea || browserLocationReady
-          ? currentPartySizeKnown
-            ? "Got it. What are you craving?"
-            : "Got the area. What are you craving, and how many people?"
-          : "What are you craving, and which area should I search?";
+        const budgetInstruction = currentBudgetKnown
+          ? `Budget is confirmed as ${budget}. Do not ask budget again unless the user changes it.`
+          : `Budget is not confirmed yet. The visible ${budget} value is only a default placeholder, so ask whether the budget is easy, comfortable, or worth it.`;
+        const dietaryInstruction = currentDietaryKnown
+          ? `Dietary needs are confirmed as "${dietary.trim()}". Do not ask dietary needs again unless the user changes them.`
+          : "Dietary needs are not confirmed yet. Ask if the user needs halal, vegetarian, vegan, no pork, allergies, or no restrictions.";
+        const contextInstruction = `${locationInstruction} ${peopleInstruction} ${budgetInstruction} ${dietaryInstruction}`;
+        const missingQuestions = [
+          currentArea || browserLocationReady ? "" : "which area",
+          currentPartySizeKnown ? "" : "how many people",
+          currentBudgetKnown ? "" : "easy, comfortable, or worth-it budget",
+          currentDietaryKnown ? "" : "any dietary needs or no restrictions",
+        ].filter(Boolean);
+        const greeting = missingQuestions.length > 0
+          ? `Got it. Tell me ${missingQuestions.slice(0, 2).join(" and ")}.`
+          : "Got it. What are you craving?";
         const session = createInlineVoiceSession(contextInstruction, greeting);
         socket.send(JSON.stringify({ type: "session.update", session }));
       };
@@ -633,7 +659,7 @@ export function VoiceExperience() {
       stream.current?.getTracks().forEach((track) => track.stop());
       void context.current?.close();
     }
-  }, [addBrainStep, applyTranscriptHints, budget, clearPlayback, flushToolResults, partySize, play, requestLocation, runRecommendationTool]);
+  }, [addBrainStep, applyTranscriptHints, budget, clearPlayback, dietary, flushToolResults, partySize, play, requestLocation, runRecommendationTool]);
 
   useEffect(() => () => stop(), [stop]);
   useEffect(() => {
@@ -762,7 +788,7 @@ export function VoiceExperience() {
                       role="radio"
                       aria-checked={budget === option.value}
                       className={budget === option.value ? "selected" : ""}
-                      onClick={() => setBudget(option.value)}
+                      onClick={() => updateBudget(option.value)}
                     >
                       {option.label}
                     </button>
@@ -775,7 +801,7 @@ export function VoiceExperience() {
               </label>
               <label>
                 <span>Dietary</span>
-                <input value={dietary} onChange={(event) => setDietary(event.target.value)} placeholder="halal, vegan..." />
+                <input value={dietary} onChange={(event) => updateDietary(event.target.value, event.target.value.trim().length > 0)} placeholder="halal, vegan..." />
               </label>
               <label className="area-field">
                 <span>Area</span>

@@ -180,6 +180,10 @@ function extractSpokenArea(text: string) {
   return "";
 }
 
+function looksLikeCraving(text: string) {
+  return /(want|wanna|craving|eat|food|restaurant|makan|nak makan|pizza|sushi|ramen|burger|nasi|lemak|mee|noodle|rice|chicken|beef|fish|seafood|thai|indian|chinese|korean|japanese|western|spicy|healthy|cheap|dessert|coffee|我想吃|我要吃|想吃|吃|找.*吃|寿司|壽司|披萨|披薩|拉面|拉麵|汉堡|漢堡|鸡饭|雞飯|辣|健康|甜品|咖啡)/i.test(text);
+}
+
 export function VoiceExperience() {
   const [status, setStatus] = useState<Status>("idle");
   const [userText, setUserText] = useState("");
@@ -417,10 +421,11 @@ export function VoiceExperience() {
     }
   }, [addBrainStep, resolveSpokenArea, updateAreaSource, updateBudget, updateDietary, updatePartySize]);
 
-  const findRecommendations = useCallback(async () => {
+  const findRecommendations = useCallback(async (overrideQuery?: string) => {
+    const searchQuery = overrideQuery?.trim() || query.trim() || userText.trim() || "restaurants";
     setRecommendationError("");
     setIsSearching(true);
-    addBrainStep("Manual search", `Searching "${query.trim() || userText.trim() || "restaurants"}" for ${partySize} people with ${budget} budget${dietary.trim() ? ` and ${dietary.trim()} needs` : ""}.`);
+    addBrainStep("Manual search", `Searching "${searchQuery}" for ${partySize} people with ${budget} budget${dietary.trim() ? ` and ${dietary.trim()} needs` : ""}.`);
     try {
       const areaText = area.trim();
       const isBrowserArea = areaSourceRef.current === "browser";
@@ -429,7 +434,7 @@ export function VoiceExperience() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          query: query.trim() || userText.trim() || "restaurants",
+          query: searchQuery,
           latitude: latestLocation?.latitude,
           longitude: latestLocation?.longitude,
           area: areaText || userText,
@@ -647,9 +652,15 @@ export function VoiceExperience() {
         else if (message.type === "transcript.user" && message.text) {
           userSpeakingRef.current = false;
           setUserText(message.text);
-          updateQuery(message.text);
+          const transcriptHasCraving = looksLikeCraving(message.text);
+          if (transcriptHasCraving) updateQuery(message.text);
           applyTranscriptHints(message.text);
           addBrainStep("Heard user", message.text);
+          const readyForSearch = Boolean(areaRef.current.trim() || locationRef.current) && partySizeKnownRef.current && budgetKnownRef.current && dietaryKnownRef.current;
+          if (readyForSearch && transcriptHasCraving) {
+            addBrainStep("Auto search", "All decision details are already confirmed, so the app searched without waiting for another tool call.");
+            void findRecommendations(message.text);
+          }
         } else if (message.type === "transcript.agent" && message.text) setAgentText(message.text);
         else if (message.type === "tool.call") void runRecommendationTool(message);
         else if (message.type === "reply.done") {
@@ -670,7 +681,7 @@ export function VoiceExperience() {
       stream.current?.getTracks().forEach((track) => track.stop());
       void context.current?.close();
     }
-  }, [addBrainStep, applyTranscriptHints, budget, clearPlayback, dietary, flushToolResults, partySize, play, query, requestLocation, runRecommendationTool, updateQuery]);
+  }, [addBrainStep, applyTranscriptHints, budget, clearPlayback, dietary, findRecommendations, flushToolResults, partySize, play, query, requestLocation, runRecommendationTool, updateQuery]);
 
   useEffect(() => () => stop(), [stop]);
   useEffect(() => {

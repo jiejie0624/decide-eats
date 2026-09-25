@@ -159,7 +159,7 @@ function extractBudget(text: string): Budget | null {
 }
 
 function extractDietary(text: string) {
-  if (/(no dietary|no restriction|no restrictions|anything is fine|no preference|都可以|没有忌口|沒有忌口|没忌口|無忌口|无忌口|不用清真|tak ada pantang|apa apa pun boleh)/i.test(text)) {
+  if (/^\s*(no|nope|none|nothing|没有|沒有|不用|不要|没有了|沒有了)\s*\.?\s*$/i.test(text) || /(no dietary|no restriction|no restrictions|anything is fine|no preference|都可以|没有忌口|沒有忌口|没忌口|無忌口|无忌口|不用清真|tak ada pantang|apa apa pun boleh)/i.test(text)) {
     return "no restrictions";
   }
   const matches = text.match(/(halal|vegan|vegetarian|gluten[- ]?free|no pork|no beef|allergy|allergic|清真|素食|不要猪肉|不要豬肉|不吃猪|不吃豬|tak makan babi|tak makan lembu)/gi);
@@ -229,6 +229,12 @@ export function VoiceExperience() {
   const budgetKnownRef = useRef(false);
   const dietaryKnownRef = useRef(false);
   const cravingKnownRef = useRef(false);
+  const queryRef = useRef("");
+  const budgetRef = useRef<Budget>("medium");
+  const partySizeRef = useRef(2);
+  const dietaryRef = useRef("");
+  const isSearchingRef = useRef(false);
+  const lastAutoSearchKeyRef = useRef("");
   const userSpeakingRef = useRef(false);
   const conversationEpochRef = useRef(0);
   const activeReplyEpochRef = useRef(-1);
@@ -246,6 +252,7 @@ export function VoiceExperience() {
 
   const updatePartySize = useCallback((value: number, known = true) => {
     const nextValue = Math.max(1, Math.min(12, Math.round(value) || 1));
+    partySizeRef.current = nextValue;
     setPartySize(nextValue);
     if (known) {
       partySizeKnownRef.current = true;
@@ -255,16 +262,19 @@ export function VoiceExperience() {
   }, []);
 
   const updateBudget = useCallback((value: Budget, known = true) => {
+    budgetRef.current = value;
     setBudget(value);
     if (known) budgetKnownRef.current = true;
   }, []);
 
   const updateDietary = useCallback((value: string, known = true) => {
+    dietaryRef.current = value;
     setDietary(value);
     dietaryKnownRef.current = known && value.trim().length > 0;
   }, []);
 
   const updateQuery = useCallback((value: string, known = true) => {
+    queryRef.current = value;
     setQuery(value);
     cravingKnownRef.current = known && value.trim().length > 0;
   }, []);
@@ -422,10 +432,14 @@ export function VoiceExperience() {
   }, [addBrainStep, resolveSpokenArea, updateAreaSource, updateBudget, updateDietary, updatePartySize]);
 
   const findRecommendations = useCallback(async (overrideQuery?: string) => {
-    const searchQuery = overrideQuery?.trim() || query.trim() || userText.trim() || "restaurants";
+    const searchQuery = overrideQuery?.trim() || queryRef.current.trim() || userText.trim() || "restaurants";
+    const latestBudget = budgetRef.current;
+    const latestPartySize = partySizeRef.current;
+    const latestDietary = dietaryRef.current.trim();
     setRecommendationError("");
+    isSearchingRef.current = true;
     setIsSearching(true);
-    addBrainStep("Manual search", `Searching "${searchQuery}" for ${partySize} people with ${budget} budget${dietary.trim() ? ` and ${dietary.trim()} needs` : ""}.`);
+    addBrainStep("Manual search", `Searching "${searchQuery}" for ${latestPartySize} people with ${latestBudget} budget${latestDietary ? ` and ${latestDietary} needs` : ""}.`);
     try {
       const areaText = area.trim();
       const isBrowserArea = areaSourceRef.current === "browser";
@@ -438,9 +452,9 @@ export function VoiceExperience() {
           latitude: latestLocation?.latitude,
           longitude: latestLocation?.longitude,
           area: areaText || userText,
-          budget,
-          partySize,
-          dietary: dietary.trim() || undefined,
+          budget: latestBudget,
+          partySize: latestPartySize,
+          dietary: latestDietary || undefined,
           rejectedIds: rejectedIdsRef.current,
         }),
       });
@@ -459,9 +473,10 @@ export function VoiceExperience() {
     } catch (caught) {
       setRecommendationError(caught instanceof Error ? caught.message : "Unable to search restaurants.");
     } finally {
+      isSearchingRef.current = false;
       setIsSearching(false);
     }
-  }, [addBrainStep, area, budget, dietary, location, partySize, query, requestLocation, userText]);
+  }, [addBrainStep, area, location, requestLocation, userText]);
 
   const runRecommendationTool = useCallback(async (message: AgentEvent) => {
     if (message.name !== "get_recommendation" || !message.call_id) return;
@@ -657,9 +672,12 @@ export function VoiceExperience() {
           applyTranscriptHints(message.text);
           addBrainStep("Heard user", message.text);
           const readyForSearch = Boolean(areaRef.current.trim() || locationRef.current) && partySizeKnownRef.current && budgetKnownRef.current && dietaryKnownRef.current;
-          if (readyForSearch && transcriptHasCraving) {
-            addBrainStep("Auto search", "All decision details are already confirmed, so the app searched without waiting for another tool call.");
-            void findRecommendations(message.text);
+          const searchQuery = transcriptHasCraving ? message.text : queryRef.current;
+          const autoSearchKey = [searchQuery.trim().toLowerCase(), areaRef.current.trim().toLowerCase(), partySizeRef.current, budgetRef.current, dietaryRef.current.trim().toLowerCase()].join("|");
+          if (readyForSearch && cravingKnownRef.current && searchQuery.trim() && !isSearchingRef.current && autoSearchKey !== lastAutoSearchKeyRef.current) {
+            lastAutoSearchKeyRef.current = autoSearchKey;
+            addBrainStep("Auto search", "All decision details are confirmed, so the app searched without waiting for another tool call.");
+            void findRecommendations(searchQuery);
           }
         } else if (message.type === "transcript.agent" && message.text) setAgentText(message.text);
         else if (message.type === "tool.call") void runRecommendationTool(message);

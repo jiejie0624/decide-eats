@@ -30,6 +30,8 @@ type GeocodedArea = {
   label: string;
   latitude: number;
   longitude: number;
+  country?: string;
+  countryCode?: string;
 };
 
 const fallbackLocation = {
@@ -43,36 +45,48 @@ const knownAreas = [
     label: "Taman Ungku Tun Aminah",
     latitude: 1.519901,
     longitude: 103.6586369,
+    country: "Malaysia",
+    countryCode: "MY",
     patterns: ["tun aminah", "dun aminah", "tun amina", "dun amina", "tuta", "taman ungku tun aminah"],
   },
   {
     label: "Kota Kinabalu, Sabah",
     latitude: 5.9804,
     longitude: 116.0735,
+    country: "Malaysia",
+    countryCode: "MY",
     patterns: ["kota kinabalu", "kk sabah", "kinabalu"],
   },
   {
     label: "Miri, Sarawak",
     latitude: 4.3995,
     longitude: 113.9914,
+    country: "Malaysia",
+    countryCode: "MY",
     patterns: ["miri", "美里"],
   },
   {
     label: "Kuching, Sarawak",
     latitude: 1.5533,
     longitude: 110.3592,
+    country: "Malaysia",
+    countryCode: "MY",
     patterns: ["kuching", "古晋"],
   },
   {
     label: "Johor Bahru, Johor",
     latitude: 1.4927,
     longitude: 103.7414,
+    country: "Malaysia",
+    countryCode: "MY",
     patterns: ["johor bahru", "jb", "新山"],
   },
   {
     label: "Kuala Lumpur",
     latitude: 3.1478,
     longitude: 101.6953,
+    country: "Malaysia",
+    countryCode: "MY",
     patterns: ["kuala lumpur", "kl", "吉隆坡"],
   },
 ];
@@ -89,6 +103,7 @@ function findKnownArea(text: string) {
 async function geocodeArea(area: string): Promise<GeocodedArea | null> {
   const endpoint = new URL("https://nominatim.openstreetmap.org/search");
   endpoint.searchParams.set("format", "jsonv2");
+  endpoint.searchParams.set("addressdetails", "1");
   endpoint.searchParams.set("limit", "1");
   endpoint.searchParams.set("q", area);
 
@@ -100,7 +115,7 @@ async function geocodeArea(area: string): Promise<GeocodedArea | null> {
       cache: "no-store",
     });
     if (!response.ok) return null;
-    const payload = (await response.json()) as Array<{ lat?: string; lon?: string; display_name?: string }>;
+    const payload = (await response.json()) as Array<{ lat?: string; lon?: string; display_name?: string; address?: { country?: string; country_code?: string } }>;
     const first = payload[0];
     if (!first?.lat || !first.lon) return null;
     const latitude = Number(first.lat);
@@ -110,6 +125,8 @@ async function geocodeArea(area: string): Promise<GeocodedArea | null> {
       label: first.display_name ?? area,
       latitude,
       longitude,
+      country: first.address?.country,
+      countryCode: first.address?.country_code?.toUpperCase(),
     };
   } catch {
     // Try the secondary public geocoder below.
@@ -124,7 +141,7 @@ async function geocodeArea(area: string): Promise<GeocodedArea | null> {
     const payload = (await response.json()) as {
       features?: Array<{
         geometry?: { coordinates?: [number, number] };
-        properties?: { name?: string; city?: string; state?: string; country?: string };
+        properties?: { name?: string; city?: string; state?: string; country?: string; countrycode?: string };
       }>;
     };
     const first = payload.features?.[0];
@@ -139,6 +156,8 @@ async function geocodeArea(area: string): Promise<GeocodedArea | null> {
         .join(", ") || area,
       latitude,
       longitude,
+      country: first?.properties?.country,
+      countryCode: first?.properties?.countrycode?.toUpperCase(),
     };
   } catch {
     return null;
@@ -156,6 +175,8 @@ function readRequest(value: unknown): RecommendationRequest {
     area: typeof body.area === "string" ? body.area.trim().slice(0, 80) : undefined,
     latitude: isFiniteCoordinate(body.latitude, -90, 90) ? body.latitude : undefined,
     longitude: isFiniteCoordinate(body.longitude, -180, 180) ? body.longitude : undefined,
+    countryCode: typeof body.countryCode === "string" ? body.countryCode.trim().slice(0, 2).toUpperCase() : undefined,
+    country: typeof body.country === "string" ? body.country.trim().slice(0, 80) : undefined,
     budget: body.budget === "low" || body.budget === "medium" || body.budget === "high" ? body.budget : undefined,
     partySize: typeof body.partySize === "number" && Number.isFinite(body.partySize) ? Math.max(1, Math.min(12, Math.round(body.partySize))) : undefined,
     dietary: typeof body.dietary === "string" ? body.dietary.trim().slice(0, 80) : undefined,
@@ -182,13 +203,8 @@ export async function POST(request: Request) {
   }
 
   const recommendationRequest = readRequest(body);
-  const apiKey = process.env.FOURSQUARE_API_KEY;
   const craving = interpretCraving(recommendationRequest.query, recommendationRequest.dietary);
   const query = normalizeQuery(craving.searchQuery);
-
-  if (!apiKey) {
-    return NextResponse.json(demoRecommendations(recommendationRequest), { headers: { "Cache-Control": "no-store" } });
-  }
 
   const areaMatch = findKnownArea(`${recommendationRequest.area ?? ""} ${query}`);
   const manualArea = recommendationRequest.area?.trim();
@@ -198,6 +214,19 @@ export async function POST(request: Request) {
   const searchLatitude = recommendationRequest.latitude ?? areaMatch?.latitude ?? geocodedArea?.latitude ?? fallbackLocation.latitude;
   const searchLongitude = recommendationRequest.longitude ?? areaMatch?.longitude ?? geocodedArea?.longitude ?? fallbackLocation.longitude;
   const areaUsed = hasUserLocation ? "Your browser location" : areaMatch?.label ?? manualArea ?? geocodedArea?.label ?? fallbackLocation.label;
+  const requestForRanking: RecommendationRequest = {
+    ...recommendationRequest,
+    latitude: searchLatitude,
+    longitude: searchLongitude,
+    area: areaUsed,
+    country: recommendationRequest.country ?? areaMatch?.country ?? geocodedArea?.country,
+    countryCode: recommendationRequest.countryCode ?? areaMatch?.countryCode ?? geocodedArea?.countryCode,
+  };
+  const apiKey = process.env.FOURSQUARE_API_KEY;
+
+  if (!apiKey) {
+    return NextResponse.json(demoRecommendations(requestForRanking), { headers: { "Cache-Control": "no-store" } });
+  }
 
   const endpoint = new URL("https://places-api.foursquare.com/places/search");
   endpoint.searchParams.set("query", query);
@@ -223,23 +252,23 @@ export async function POST(request: Request) {
     if (!response.ok) {
       console.error("Foursquare search failed", response.status);
       return NextResponse.json(
-        demoRecommendations(recommendationRequest, "Foursquare did not return live results, so demo data is shown."),
+        demoRecommendations(requestForRanking, "Foursquare did not return live results, so demo data is shown."),
         { headers: { "Cache-Control": "no-store" } },
       );
     }
 
     const payload = (await response.json()) as FoursquareSearchResponse;
     const places = Array.isArray(payload.results)
-      ? payload.results.map((place) => mapFoursquarePlace(place as FoursquarePlace, recommendationRequest))
+      ? payload.results.map((place) => mapFoursquarePlace(place as FoursquarePlace, requestForRanking))
       : [];
     const foodPlaces = places.filter((place) => looksLikeFoodPlace(place.category, place.name));
-    const rankedPlaces = rankRecommendations(foodPlaces.length > 0 ? foodPlaces : places, recommendationRequest).slice(0, 3);
+    const rankedPlaces = rankRecommendations(foodPlaces.length > 0 ? foodPlaces : places, requestForRanking).slice(0, 3);
     const resolvedCenter = payload.context?.geo_bounds?.circle?.center;
     const resolvedAreaUsed = shouldUseNearSearch && resolvedCenter ? areaUsed : areaUsed;
 
     if (rankedPlaces.length === 0) {
       return NextResponse.json(
-        demoRecommendations(recommendationRequest, "No live restaurants matched this query, so demo data is shown."),
+        demoRecommendations(requestForRanking, "No live restaurants matched this query, so demo data is shown."),
         { headers: { "Cache-Control": "no-store" } },
       );
     }
@@ -260,7 +289,7 @@ export async function POST(request: Request) {
     );
   } catch {
     return NextResponse.json(
-      demoRecommendations(recommendationRequest, "Restaurant provider is unavailable, so demo data is shown."),
+      demoRecommendations(requestForRanking, "Restaurant provider is unavailable, so demo data is shown."),
       { headers: { "Cache-Control": "no-store" } },
     );
   }

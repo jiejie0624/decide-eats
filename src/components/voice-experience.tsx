@@ -118,11 +118,6 @@ function withLocationTimeout(promise: Promise<{ latitude: number; longitude: num
 function extractPartySize(text: string) {
   const normalized = text.toLowerCase();
   const chineseDigits: Record<string, number> = { 一: 1, 二: 2, 两: 2, 兩: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
-  if (/(just me|only me|alone|solo|by myself|myself|一个人|一個人|我自己|自己吃|seorang|satu orang)/i.test(text)) return 1;
-  const explicitNumber = normalized.match(/\b([1-9]|1[0-2])\s*(people|person|pax|of us|persons|orang)\b/);
-  if (explicitNumber) return Number(explicitNumber[1]);
-  const forNumber = normalized.match(/\b(for|we are|we're|kami|kita)\s+([1-9]|1[0-2])\b/);
-  if (forNumber) return Number(forNumber[2]);
   const wordNumbers: Record<string, number> = {
     one: 1,
     two: 2,
@@ -143,45 +138,78 @@ function extractPartySize(text: string) {
     lima: 5,
     enam: 6,
   };
-  for (const [word, size] of Object.entries(wordNumbers)) {
-    if (new RegExp(`\\b${word}\\s+(people|person|pax|of us|orang)\\b`, "i").test(text)) return size;
+  const candidates: Array<{ index: number; value: number }> = [];
+  const soloPattern = /(just me|only me|alone|solo|by myself|myself|一个人|一個人|我自己|自己吃|seorang|satu orang)/gi;
+  for (const match of normalized.matchAll(soloPattern)) candidates.push({ index: match.index ?? 0, value: 1 });
+  for (const match of normalized.matchAll(/\b([1-9]|1[0-2])\s*(people|person|persons|pax|of us|orang)\b/g)) {
+    candidates.push({ index: match.index ?? 0, value: Number(match[1]) });
   }
-  const chineseMatch = text.match(/([一二两兩三四五六七八九十])\s*(个|個)?\s*人/);
-  if (chineseMatch) return chineseDigits[chineseMatch[1]];
+  for (const match of normalized.matchAll(/\b(for|we are|we're|kami|kita)\s+([1-9]|1[0-2])\b/g)) {
+    candidates.push({ index: match.index ?? 0, value: Number(match[2]) });
+  }
+  for (const [word, size] of Object.entries(wordNumbers)) {
+    for (const match of normalized.matchAll(new RegExp(`\\b${word}\\s+(people|person|persons|pax|of us|orang)\\b`, "gi"))) {
+      candidates.push({ index: match.index ?? 0, value: size });
+    }
+  }
+  for (const match of text.matchAll(/([一二两兩三四五六七八九十])\s*(个|個)?\s*人/g)) {
+    candidates.push({ index: match.index ?? 0, value: chineseDigits[match[1]] });
+  }
+  candidates.sort((left, right) => left.index - right.index);
+  if (candidates.length > 0) return candidates[candidates.length - 1].value;
   return null;
 }
 
 function extractBudget(text: string): Budget | null {
-  if (/(cheap|easy budget|budget|affordable|not expensive|murah|便宜|省钱|省錢)/i.test(text)) return "low";
-  if (/(comfortable|normal|medium|average|biasa|普通|舒服|中等)/i.test(text)) return "medium";
-  if (/(premium|worth it|expensive|mahal|高级|高級|贵一点|貴一點)/i.test(text)) return "high";
-  return null;
+  const patterns: Array<{ value: Budget; pattern: RegExp }> = [
+    { value: "low", pattern: /(cheap|easy budget|budget|affordable|not expensive|murah|便宜|省钱|省錢)/gi },
+    { value: "medium", pattern: /(comfortable|normal|medium|average|biasa|普通|舒服|中等)/gi },
+    { value: "high", pattern: /(premium|worth it|expensive|mahal|高级|高級|贵一点|貴一點)/gi },
+  ];
+  const candidates = patterns.flatMap(({ value, pattern }) => Array.from(text.matchAll(pattern), (match) => ({ index: match.index ?? 0, value })));
+  candidates.sort((left, right) => left.index - right.index);
+  return candidates[candidates.length - 1]?.value ?? null;
 }
 
 function extractDietary(text: string) {
   if (/^\s*(no|nope|none|nothing|没有|沒有|不用|不要|没有了|沒有了)\s*\.?\s*$/i.test(text) || /(no dietary|no restriction|no restrictions|anything is fine|no preference|都可以|没有忌口|沒有忌口|没忌口|無忌口|无忌口|不用清真|tak ada pantang|apa apa pun boleh)/i.test(text)) {
     return "no restrictions";
   }
-  const matches = text.match(/(halal|vegan|vegetarian|gluten[- ]?free|no pork|no beef|allergy|allergic|清真|素食|不要猪肉|不要豬肉|不吃猪|不吃豬|tak makan babi|tak makan lembu)/gi);
-  return matches ? Array.from(new Set(matches.map((item) => item.trim()))).join(", ") : "";
+  const matches = Array.from(text.matchAll(/(halal|vegan|vegetarian|gluten[- ]?free|no pork|no beef|allergy|allergic|清真|素食|不要猪肉|不要豬肉|不吃猪|不吃豬|tak makan babi|tak makan lembu)/gi));
+  if (matches.length === 0) return "";
+  const lastCorrectionIndex = Math.max(text.toLowerCase().lastIndexOf("oh no"), text.toLowerCase().lastIndexOf("actually"), text.lastIndexOf("不是"), text.lastIndexOf("不对"), text.lastIndexOf("不對"));
+  const filtered = lastCorrectionIndex >= 0 ? matches.filter((match) => (match.index ?? 0) >= lastCorrectionIndex) : matches;
+  return Array.from(new Set((filtered.length > 0 ? filtered : matches).map((match) => match[0].trim()))).join(", ");
 }
 
 function extractSpokenArea(text: string) {
   const patterns = [
-    /\b(?:i live in|i am in|i'm in|im in|i stay in|i am from|i'm from|im from|near|around|area is|location is|search in)\s+([^,.!?，。！？]+?)(?:\s+(?:for|and|with|want|wanna|looking|eat|makan)\b|[,.!?，。！？]|$)/i,
-    /\b(?:di|dekat|area|lokasi)\s+([^,.!?，。！？]+?)(?:\s+(?:nak|makan|untuk|and|with)\b|[,.!?，。！？]|$)/i,
-    /(?:我在|我住在|我来自|我來自|地点是|地點是|位置是|地区是|地區是|附近在)\s*([^，。！？,.!?]+?)(?:\s*(?:想|吃|找|，|。|,|\.|$))/,
+    /\b(?:i live in|i am in|i'm in|im in|i stay in|i am from|i'm from|im from|near|around|area is|location is|search in)\s+([^,.!?，。！？]+?)(?:\s+(?:for|and|with|want|wanna|looking|eat|makan)\b|[,.!?，。！？]|$)/gi,
+    /\b(?:di|dekat|area|lokasi)\s+([^,.!?，。！？]+?)(?:\s+(?:nak|makan|untuk|and|with)\b|[,.!?，。！？]|$)/gi,
+    /(?:我在|我住在|我来自|我來自|地点是|地點是|位置是|地区是|地區是|附近在)\s*([^，。！？,.!?]+?)(?:\s*(?:想|吃|找|，|。|,|\.|$))/g,
   ];
+  const candidates: Array<{ index: number; value: string }> = [];
   for (const pattern of patterns) {
-    const match = text.match(pattern);
-    const value = match?.[1]?.trim().replace(/\s+(restaurant|food|place|places|餐厅|餐廳|美食)$/i, "");
-    if (value && value.length >= 2 && value.length <= 60) return value;
+    for (const match of text.matchAll(pattern)) {
+      const value = match?.[1]?.trim().replace(/\s+(restaurant|food|place|places|餐厅|餐廳|美食)$/i, "");
+      if (value && value.length >= 2 && value.length <= 60) candidates.push({ index: match.index ?? 0, value });
+    }
   }
-  return "";
+  candidates.sort((left, right) => left.index - right.index);
+  return candidates[candidates.length - 1]?.value ?? "";
 }
 
 function looksLikeCraving(text: string) {
   return /(want|wanna|craving|eat|food|restaurant|makan|nak makan|pizza|sushi|ramen|burger|nasi|lemak|mee|noodle|rice|chicken|beef|fish|seafood|thai|indian|chinese|korean|japanese|western|spicy|healthy|cheap|dessert|coffee|我想吃|我要吃|想吃|吃|找.*吃|寿司|壽司|披萨|披薩|拉面|拉麵|汉堡|漢堡|鸡饭|雞飯|辣|健康|甜品|咖啡)/i.test(text);
+}
+
+function extractCraving(text: string) {
+  const chunks = text
+    .split(/\b(?:oh no|actually|sorry|instead|change to)\b|不是|不对|不對|改成|换成|換成/gi)
+    .map((chunk) => chunk.trim())
+    .filter(Boolean);
+  const finalChunk = chunks[chunks.length - 1] ?? text;
+  return looksLikeCraving(finalChunk) ? finalChunk : "";
 }
 
 export function VoiceExperience() {
@@ -667,12 +695,12 @@ export function VoiceExperience() {
         else if (message.type === "transcript.user" && message.text) {
           userSpeakingRef.current = false;
           setUserText(message.text);
-          const transcriptHasCraving = looksLikeCraving(message.text);
-          if (transcriptHasCraving) updateQuery(message.text);
+          const transcriptCraving = extractCraving(message.text);
+          if (transcriptCraving) updateQuery(transcriptCraving);
           applyTranscriptHints(message.text);
           addBrainStep("Heard user", message.text);
           const readyForSearch = Boolean(areaRef.current.trim() || locationRef.current) && partySizeKnownRef.current && budgetKnownRef.current && dietaryKnownRef.current;
-          const searchQuery = transcriptHasCraving ? message.text : queryRef.current;
+          const searchQuery = transcriptCraving || queryRef.current;
           const autoSearchKey = [searchQuery.trim().toLowerCase(), areaRef.current.trim().toLowerCase(), partySizeRef.current, budgetRef.current, dietaryRef.current.trim().toLowerCase()].join("|");
           if (readyForSearch && cravingKnownRef.current && searchQuery.trim() && !isSearchingRef.current && autoSearchKey !== lastAutoSearchKeyRef.current) {
             lastAutoSearchKeyRef.current = autoSearchKey;

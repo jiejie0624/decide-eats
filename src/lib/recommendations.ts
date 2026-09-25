@@ -3,6 +3,8 @@ export type RecommendationRequest = {
   latitude?: number;
   longitude?: number;
   area?: string;
+  countryCode?: string;
+  country?: string;
   budget?: "low" | "medium" | "high";
   partySize?: number;
   dietary?: string;
@@ -188,9 +190,34 @@ function coordinatesIn(request: RecommendationRequest, bounds: { minLat: number;
 }
 
 function detectCurrency(request: RecommendationRequest) {
-  const area = `${request.area ?? ""} ${request.query}`.toLowerCase();
+  const countryCode = request.countryCode?.toUpperCase();
+  const area = `${request.area ?? ""} ${request.country ?? ""} ${request.query}`.toLowerCase();
+  const byCountryCode: Record<string, { code: string; ranges: string[] }> = {
+    US: { code: "USD", ranges: ["$5–12", "$12–25", "$25–50", "$50+"] },
+    IN: { code: "INR", ranges: ["₹100–250", "₹250–600", "₹600–1,200", "₹1,200+"] },
+    MY: { code: "MYR", ranges: ["RM5–15", "RM12–30", "RM25–60", "RM60+"] },
+    SG: { code: "SGD", ranges: ["S$5–12", "S$12–25", "S$25–50", "S$50+"] },
+    CN: { code: "CNY", ranges: ["¥20–50", "¥50–100", "¥100–200", "¥200+"] },
+    JP: { code: "JPY", ranges: ["¥600–1,200", "¥1,200–2,500", "¥2,500–5,000", "¥5,000+"] },
+    KR: { code: "KRW", ranges: ["₩7k–15k", "₩15k–30k", "₩30k–60k", "₩60k+"] },
+    TH: { code: "THB", ranges: ["฿60–150", "฿150–350", "฿350–800", "฿800+"] },
+    ID: { code: "IDR", ranges: ["Rp20k–50k", "Rp50k–120k", "Rp120k–250k", "Rp250k+"] },
+    PH: { code: "PHP", ranges: ["₱100–250", "₱250–600", "₱600–1,200", "₱1,200+"] },
+    GB: { code: "GBP", ranges: ["£5–12", "£12–25", "£25–50", "£50+"] },
+    AU: { code: "AUD", ranges: ["A$8–18", "A$18–35", "A$35–70", "A$70+"] },
+    CA: { code: "CAD", ranges: ["C$8–18", "C$18–35", "C$35–70", "C$70+"] },
+    NZ: { code: "NZD", ranges: ["NZ$8–18", "NZ$18–35", "NZ$35–70", "NZ$70+"] },
+    AE: { code: "AED", ranges: ["AED20–45", "AED45–90", "AED90–180", "AED180+"] },
+  };
+  if (countryCode && byCountryCode[countryCode]) return byCountryCode[countryCode];
+  if (countryCode && ["FR", "DE", "IT", "ES", "NL", "IE", "BE", "AT", "PT", "FI", "GR", "LU", "MT", "CY", "EE", "LV", "LT", "SK", "SI"].includes(countryCode)) {
+    return { code: "EUR", ranges: ["€6–12", "€12–25", "€25–50", "€50+"] };
+  }
   if (/(united states|usa|u\.s\.|america|new york|los angeles|san francisco|chicago|seattle|boston)/.test(area) || coordinatesIn(request, { minLat: 24, maxLat: 50, minLon: -125, maxLon: -66 })) {
     return { code: "USD", ranges: ["$5–12", "$12–25", "$25–50", "$50+"] };
+  }
+  if (/(india|印度|delhi|mumbai|bangalore|bengaluru|chennai|hyderabad|kolkata)/.test(area) || coordinatesIn(request, { minLat: 6, maxLat: 36, minLon: 68, maxLon: 98 })) {
+    return { code: "INR", ranges: ["₹100–250", "₹250–600", "₹600–1,200", "₹1,200+"] };
   }
   if (/(china|中国|beijing|北京|shanghai|上海|guangzhou|广州|shenzhen|深圳|chengdu|成都)/.test(area) || coordinatesIn(request, { minLat: 18, maxLat: 54, minLon: 73, maxLon: 135 })) {
     return { code: "CNY", ranges: ["¥20–50", "¥50–100", "¥100–200", "¥200+"] };

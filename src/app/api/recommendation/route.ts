@@ -87,6 +87,37 @@ function findKnownArea(text: string) {
 }
 
 async function geocodeArea(area: string): Promise<GeocodedArea | null> {
+  const googleApiKey = process.env.GOOGLE_MAPS_API_KEY;
+  if (googleApiKey) {
+    const googleEndpoint = new URL("https://maps.googleapis.com/maps/api/geocode/json");
+    googleEndpoint.searchParams.set("address", area);
+    googleEndpoint.searchParams.set("key", googleApiKey);
+    try {
+      const googleResponse = await fetch(googleEndpoint, { cache: "no-store" });
+      if (googleResponse.ok) {
+        const googlePayload = (await googleResponse.json()) as {
+          status?: string;
+          results?: Array<{
+            formatted_address?: string;
+            geometry?: { location?: { lat?: number; lng?: number } };
+          }>;
+        };
+        const first = googlePayload.status === "OK" ? googlePayload.results?.[0] : null;
+        const latitude = first?.geometry?.location?.lat;
+        const longitude = first?.geometry?.location?.lng;
+        if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+          return {
+            label: first?.formatted_address ?? area,
+            latitude: latitude as number,
+            longitude: longitude as number,
+          };
+        }
+      }
+    } catch {
+      // Fall back to the free geocoder below.
+    }
+  }
+
   const endpoint = new URL("https://nominatim.openstreetmap.org/search");
   endpoint.searchParams.set("format", "jsonv2");
   endpoint.searchParams.set("limit", "1");

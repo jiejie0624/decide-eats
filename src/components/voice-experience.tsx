@@ -10,6 +10,7 @@ type Budget = "low" | "medium" | "high";
 type AreaSource = "empty" | "browser" | "manual" | "voice";
 type ToolArguments = { query?: string; latitude?: number; longitude?: number; area?: string; budget?: Budget; partySize?: number; dietary?: string; rejectedIds?: string[] };
 type BrainStep = { id: number; label: string; detail: string };
+type ResolvedLocation = { label: string; latitude: number; longitude: number; provider?: string };
 type AgentEvent = {
   type: string;
   text?: string;
@@ -113,6 +114,68 @@ function withLocationTimeout(promise: Promise<{ latitude: number; longitude: num
       }, timeoutMs);
     }),
   ]);
+}
+
+function extractPartySize(text: string) {
+  const normalized = text.toLowerCase();
+  const chineseDigits: Record<string, number> = { 一: 1, 二: 2, 两: 2, 兩: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
+  if (/(just me|only me|alone|solo|by myself|myself|一个人|一個人|我自己|自己吃|seorang|satu orang)/i.test(text)) return 1;
+  const explicitNumber = normalized.match(/\b([1-9]|1[0-2])\s*(people|person|pax|of us|persons|orang)\b/);
+  if (explicitNumber) return Number(explicitNumber[1]);
+  const forNumber = normalized.match(/\b(for|we are|we're|kami|kita)\s+([1-9]|1[0-2])\b/);
+  if (forNumber) return Number(forNumber[2]);
+  const wordNumbers: Record<string, number> = {
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
+    seven: 7,
+    eight: 8,
+    nine: 9,
+    ten: 10,
+    eleven: 11,
+    twelve: 12,
+    satu: 1,
+    dua: 2,
+    tiga: 3,
+    empat: 4,
+    lima: 5,
+    enam: 6,
+  };
+  for (const [word, size] of Object.entries(wordNumbers)) {
+    if (new RegExp(`\\b${word}\\s+(people|person|pax|of us|orang)\\b`, "i").test(text)) return size;
+  }
+  const chineseMatch = text.match(/([一二两兩三四五六七八九十])\s*(个|個)?\s*人/);
+  if (chineseMatch) return chineseDigits[chineseMatch[1]];
+  return null;
+}
+
+function extractBudget(text: string): Budget | null {
+  if (/(cheap|easy budget|budget|affordable|not expensive|murah|便宜|省钱|省錢)/i.test(text)) return "low";
+  if (/(comfortable|normal|medium|average|biasa|普通|舒服|中等)/i.test(text)) return "medium";
+  if (/(premium|worth it|expensive|mahal|高级|高級|贵一点|貴一點)/i.test(text)) return "high";
+  return null;
+}
+
+function extractDietary(text: string) {
+  const matches = text.match(/(halal|vegan|vegetarian|gluten[- ]?free|no pork|no beef|allergy|allergic|清真|素食|不要猪肉|不要豬肉|不吃猪|不吃豬|tak makan babi|tak makan lembu)/gi);
+  return matches ? Array.from(new Set(matches.map((item) => item.trim()))).join(", ") : "";
+}
+
+function extractSpokenArea(text: string) {
+  const patterns = [
+    /\b(?:i live in|i am in|i'm in|im in|i stay in|i am from|i'm from|im from|near|around|area is|location is|search in)\s+([^,.!?，。！？]+?)(?:\s+(?:for|and|with|want|wanna|looking|eat|makan)\b|[,.!?，。！？]|$)/i,
+    /\b(?:di|dekat|area|lokasi)\s+([^,.!?，。！？]+?)(?:\s+(?:nak|makan|untuk|and|with)\b|[,.!?，。！？]|$)/i,
+    /(?:我在|我住在|我来自|我來自|地点是|地點是|位置是|地区是|地區是|附近在)\s*([^，。！？,.!?]+?)(?:\s*(?:想|吃|找|，|。|,|\.|$))/,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const value = match?.[1]?.trim().replace(/\s+(restaurant|food|place|places|餐厅|餐廳|美食)$/i, "");
+    if (value && value.length >= 2 && value.length <= 60) return value;
+  }
+  return "";
 }
 
 export function VoiceExperience() {
@@ -271,6 +334,57 @@ export function VoiceExperience() {
     });
   }, [fillAreaFromCoordinates]);
 
+  const resolveSpokenArea = useCallback(async (spokenArea: string) => {
+    const cleanArea = spokenArea.trim();
+    if (!cleanArea) return null;
+    try {
+      const response = await fetch("/api/resolve-location", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: cleanArea }),
+      });
+      const payload = (await response.json()) as ResolvedLocation | { error?: string };
+      if (!response.ok || !("label" in payload)) return null;
+      updateAreaSource("voice");
+      areaRef.current = payload.label;
+      setArea(payload.label);
+      const coordinates = { latitude: payload.latitude, longitude: payload.longitude };
+      locationRef.current = coordinates;
+      setLocation(coordinates);
+      setLocationStatus("ready");
+      locationStatusRef.current = "ready";
+      addBrainStep("Location", `Resolved "${cleanArea}" as ${payload.label}.`);
+      return payload;
+    } catch {
+      return null;
+    }
+  }, [addBrainStep, updateAreaSource]);
+
+  const applyTranscriptHints = useCallback((text: string) => {
+    const nextPartySize = extractPartySize(text);
+    if (nextPartySize) {
+      setPartySize(nextPartySize);
+      addBrainStep("People", `Detected ${nextPartySize} ${nextPartySize === 1 ? "person" : "people"} from your voice.`);
+    }
+
+    const nextBudget = extractBudget(text);
+    if (nextBudget) setBudget(nextBudget);
+
+    const nextDietary = extractDietary(text);
+    if (nextDietary) setDietary(nextDietary);
+
+    const spokenArea = extractSpokenArea(text);
+    if (spokenArea) {
+      updateAreaSource("voice");
+      areaRef.current = spokenArea;
+      setArea(spokenArea);
+      setLocation(null);
+      locationRef.current = null;
+      setLocationStatus("idle");
+      void resolveSpokenArea(spokenArea);
+    }
+  }, [addBrainStep, resolveSpokenArea, updateAreaSource]);
+
   const findRecommendations = useCallback(async () => {
     setRecommendationError("");
     setIsSearching(true);
@@ -320,7 +434,8 @@ export function VoiceExperience() {
     const latestLocation = locationRef.current;
     const spokenArea = typeof args.area === "string" ? args.area.trim() : "";
     const currentArea = areaRef.current.trim();
-    const nextArea = spokenArea || currentArea || userText.trim();
+    const resolvedSpokenArea = spokenArea ? await resolveSpokenArea(spokenArea) : null;
+    const nextArea = resolvedSpokenArea?.label ?? (spokenArea || currentArea || userText.trim());
     const nextBudget = args.budget ?? budget;
     const nextPartySize =
       typeof args.partySize === "number" && Number.isFinite(args.partySize)
@@ -329,11 +444,13 @@ export function VoiceExperience() {
     const nextDietary = typeof args.dietary === "string" && args.dietary.trim() ? args.dietary.trim() : dietary.trim() || undefined;
     if (spokenArea) {
       updateAreaSource("voice");
-      areaRef.current = spokenArea;
-      setArea(spokenArea);
-      setLocation(null);
-      locationRef.current = null;
-      setLocationStatus("idle");
+      areaRef.current = resolvedSpokenArea?.label ?? spokenArea;
+      setArea(resolvedSpokenArea?.label ?? spokenArea);
+      if (!resolvedSpokenArea) {
+        setLocation(null);
+        locationRef.current = null;
+        setLocationStatus("idle");
+      }
     }
     if (args.query) setQuery(args.query);
     if (args.budget) setBudget(args.budget);
@@ -345,8 +462,8 @@ export function VoiceExperience() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           query: args.query ?? (query.trim() || userText.trim() || "restaurants"),
-          latitude: args.latitude ?? (spokenArea ? undefined : latestLocation?.latitude),
-          longitude: args.longitude ?? (spokenArea ? undefined : latestLocation?.longitude),
+          latitude: args.latitude ?? resolvedSpokenArea?.latitude ?? (spokenArea ? undefined : latestLocation?.latitude),
+          longitude: args.longitude ?? resolvedSpokenArea?.longitude ?? (spokenArea ? undefined : latestLocation?.longitude),
           area: nextArea,
           budget: nextBudget,
           partySize: nextPartySize,
@@ -373,7 +490,7 @@ export function VoiceExperience() {
     } finally {
       setToolStatus("Search result ready for the voice agent.");
     }
-  }, [addBrainStep, budget, dietary, partySize, query, updateAreaSource, userText]);
+  }, [addBrainStep, budget, dietary, partySize, query, resolveSpokenArea, updateAreaSource, userText]);
 
   const flushToolResults = useCallback((socket: WebSocket) => {
     if (socket.readyState !== WebSocket.OPEN || pendingToolResults.current.length === 0) return;
@@ -474,6 +591,7 @@ export function VoiceExperience() {
           userSpeakingRef.current = false;
           setUserText(message.text);
           setQuery(message.text);
+          applyTranscriptHints(message.text);
           addBrainStep("Heard user", message.text);
         } else if (message.type === "transcript.agent" && message.text) setAgentText(message.text);
         else if (message.type === "tool.call") void runRecommendationTool(message);
@@ -495,7 +613,7 @@ export function VoiceExperience() {
       stream.current?.getTracks().forEach((track) => track.stop());
       void context.current?.close();
     }
-  }, [addBrainStep, clearPlayback, flushToolResults, play, requestLocation, runRecommendationTool]);
+  }, [addBrainStep, applyTranscriptHints, clearPlayback, flushToolResults, play, requestLocation, runRecommendationTool]);
 
   useEffect(() => () => stop(), [stop]);
   useEffect(() => {

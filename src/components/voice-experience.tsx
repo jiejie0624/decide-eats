@@ -76,10 +76,11 @@ function directionsUrl(place: Recommendation, origin?: string) {
 
 function inferCountryCodeFromContext(areaLabel: string, coordinates: { latitude: number; longitude: number } | null) {
   const countryPatterns: Array<[string, RegExp]> = [
+    ["CN", /\b(beijing|peking|shanghai|guangzhou|shenzhen|chengdu|hangzhou|china)\b|北京|上海|广州|廣州|深圳|成都|杭州|中国|中國/i],
     ["MY", /malaysia|马来西亚|馬來西亞|johor|sarawak|sabah|perak|kuala lumpur/i],
-    ["US", /united states|usa|u\.s\.|america|new york|california|texas|florida/i],
-    ["GB", /united kingdom|uk|england|scotland|wales|london/i],
-    ["IN", /india|印度|delhi|mumbai|bangalore|bengaluru|chennai|hyderabad/i],
+    ["US", /\b(new york|nyc|los angeles|san francisco|chicago|seattle|boston|washington|california|texas|florida|united states|usa|america)\b/i],
+    ["GB", /\b(london|manchester|birmingham|edinburgh|glasgow|england|scotland|wales|united kingdom|uk)\b|英国|英國/i],
+    ["IN", /\b(delhi|mumbai|bangalore|bengaluru|chennai|hyderabad|kolkata|india)\b|印度/i],
     ["SG", /singapore|新加坡/i],
     ["CN", /china|中国|beijing|北京|shanghai|上海/i],
     ["JP", /japan|日本|tokyo|東京|osaka|大阪/i],
@@ -445,7 +446,7 @@ export function VoiceExperience() {
     try {
       const contextLabel = areaRef.current.trim();
       const contextCoordinates = locationRef.current;
-      const countryCode = countryCodeRef.current ?? inferCountryCodeFromContext(contextLabel, contextCoordinates);
+      const countryCode = inferCountryCodeFromContext(cleanArea, null) ?? countryCodeRef.current ?? inferCountryCodeFromContext(contextLabel, contextCoordinates);
       const response = await fetch("/api/resolve-location", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

@@ -39,6 +39,26 @@ function normalizeQuery(query: string) {
     .trim();
 }
 
+function inferCountryCodeFromText(text: string) {
+  const patterns: Array<[string, RegExp]> = [
+    ["CN", /\b(beijing|peking|shanghai|guangzhou|shenzhen|chengdu|hangzhou|china)\b|北京|上海|广州|廣州|深圳|成都|杭州|中国|中國/i],
+    ["US", /\b(new york|nyc|los angeles|san francisco|chicago|seattle|boston|washington|california|texas|florida|united states|usa|america)\b/i],
+    ["GB", /\b(london|manchester|birmingham|edinburgh|glasgow|england|scotland|wales|united kingdom|uk)\b|英国|英國/i],
+    ["IN", /\b(delhi|mumbai|bangalore|bengaluru|chennai|hyderabad|kolkata|india)\b|印度/i],
+    ["MY", /\b(kuala lumpur|johor|sarawak|sabah|perak|ipoh|miri|kuching|kota kinabalu|malaysia)\b|马来西亚|馬來西亞|吉隆坡|新山|霹雳|霹靂|怡保|美里|古晋|古晉|亚庇|亞庇/i],
+    ["SG", /\b(singapore)\b|新加坡/i],
+    ["JP", /\b(tokyo|osaka|kyoto|japan)\b|东京|東京|大阪|京都|日本/i],
+    ["KR", /\b(seoul|busan|korea|south korea)\b|首尔|首爾|釜山|韩国|韓國/i],
+    ["TH", /\b(bangkok|phuket|chiang mai|thailand)\b|曼谷|泰国|泰國/i],
+    ["ID", /\b(jakarta|bali|bandung|surabaya|indonesia)\b|雅加达|雅加達|巴厘|印尼/i],
+    ["PH", /\b(manila|cebu|philippines)\b|马尼拉|馬尼拉|菲律宾|菲律賓/i],
+    ["AU", /\b(sydney|melbourne|brisbane|perth|australia)\b|澳洲|澳大利亚|澳大利亞/i],
+    ["CA", /\b(toronto|vancouver|montreal|canada)\b|加拿大/i],
+    ["IT", /\b(rome|milan|milano|turin|venice|florence|italy|italia)\b|罗马|羅馬|米兰|米蘭|意大利/i],
+  ];
+  return patterns.find(([, pattern]) => pattern.test(text))?.[0];
+}
+
 function repairedQueries(query: string, preferredCountryCode?: string) {
   const normalized = normalizeQuery(query);
   const variants = new Set<string>();
@@ -183,7 +203,8 @@ export async function POST(request: Request) {
   const contextCoordinates = contextLatitude !== null && contextLongitude !== null ? { latitude: contextLatitude, longitude: contextLongitude } : undefined;
   if (rawQuery.length < 2) return NextResponse.json({ error: "Location is too short." }, { status: 400 });
 
-  const preferredCountryCode = countryCode || undefined;
+  const explicitCountryCode = inferCountryCodeFromText(rawQuery);
+  const preferredCountryCode = explicitCountryCode || countryCode || undefined;
   const candidates: LocationCandidate[] = [];
   for (const query of repairedQueries(rawQuery, preferredCountryCode)) {
     candidates.push(...(await resolveWithNominatim(query, preferredCountryCode)));

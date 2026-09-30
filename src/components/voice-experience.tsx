@@ -171,6 +171,9 @@ function extractPartySize(text: string) {
   const candidates: Array<{ index: number; value: number }> = [];
   const soloPattern = /(just me|only me|alone|solo|by myself|myself|一个人|一個人|我自己|自己吃|seorang|satu orang)/gi;
   for (const match of normalized.matchAll(soloPattern)) candidates.push({ index: match.index ?? 0, value: 1 });
+  for (const match of normalized.matchAll(/\bwith\s+([1-9]|1[0-1])\s+(friend|friends|colleague|colleagues|classmate|classmates)\b/g)) {
+    candidates.push({ index: match.index ?? 0, value: Number(match[1]) + 1 });
+  }
   for (const match of normalized.matchAll(/\b([1-9]|1[0-2])\s*(people|person|persons|pax|of us|orang)\b/g)) {
     candidates.push({ index: match.index ?? 0, value: Number(match[1]) });
   }
@@ -240,6 +243,20 @@ function extractCraving(text: string) {
     .filter(Boolean);
   const finalChunk = chunks[chunks.length - 1] ?? text;
   return looksLikeCraving(finalChunk) ? finalChunk : "";
+}
+
+function followUpPromptForMissing(missing: string[]) {
+  if (missing.length === 0) return "";
+  const hasBudget = missing.includes("budget");
+  const hasDietary = missing.includes("dietary");
+  if (hasBudget && hasDietary) return "Got it. What budget do you prefer, and any dietary needs or allergies?";
+  if (hasBudget) return "Got it. What budget do you prefer: easy, comfortable, or worth it?";
+  if (hasDietary) return "Got it. Any dietary needs, allergies, or no restrictions?";
+  if (missing.includes("craving") && missing.includes("party")) return "Got it. What would you like to eat, and how many people is it for?";
+  if (missing.includes("craving")) return "Got it. What would you like to eat?";
+  if (missing.includes("area")) return "Got it. Which area should I search in?";
+  if (missing.includes("party")) return "Got it. How many people is it for?";
+  return "Got it. I need a little more detail before choosing a place.";
 }
 
 export function VoiceExperience() {
@@ -337,6 +354,14 @@ export function VoiceExperience() {
     setQuery(value);
     cravingKnownRef.current = known && value.trim().length > 0;
   }, []);
+
+  const currentMissingFields = useCallback(() => [
+    cravingKnownRef.current && queryRef.current.trim() ? "" : "craving",
+    areaRef.current.trim() || locationRef.current ? "" : "area",
+    partySizeKnownRef.current ? "" : "party",
+    budgetKnownRef.current ? "" : "budget",
+    dietaryKnownRef.current ? "" : "dietary",
+  ].filter(Boolean), []);
 
   const clearPlayback = useCallback(() => {
     outputs.current.forEach((item) => {
@@ -764,6 +789,7 @@ export function VoiceExperience() {
         else if (message.type === "transcript.user" && message.text) {
           userSpeakingRef.current = false;
           setUserText(message.text);
+          setAgentText("");
           const transcriptCraving = extractCraving(message.text);
           if (transcriptCraving) updateQuery(transcriptCraving);
           applyTranscriptHints(message.text);
@@ -775,8 +801,21 @@ export function VoiceExperience() {
             lastAutoSearchKeyRef.current = autoSearchKey;
             addBrainStep("Auto search", "All decision details are confirmed, so the app searched without waiting for another tool call.");
             void findRecommendations(searchQuery);
+          } else {
+            const prompt = followUpPromptForMissing(currentMissingFields());
+            if (prompt) {
+              setAgentText(prompt);
+              addBrainStep("Follow-up", prompt);
+            }
           }
-        } else if (message.type === "transcript.agent" && message.text) setAgentText(message.text);
+        } else if (message.type === "transcript.agent" && message.text) {
+          const missingPrompt = followUpPromptForMissing(currentMissingFields());
+          const staleSetupQuestion =
+            cravingKnownRef.current &&
+            partySizeKnownRef.current &&
+            /what (you want|would you like) to eat|how many people/i.test(message.text);
+          setAgentText(staleSetupQuestion && missingPrompt ? missingPrompt : message.text);
+        }
         else if (message.type === "tool.call") void runRecommendationTool(message);
         else if (message.type === "reply.done") {
           flushToolResults(socket);
@@ -796,7 +835,7 @@ export function VoiceExperience() {
       stream.current?.getTracks().forEach((track) => track.stop());
       void context.current?.close();
     }
-  }, [addBrainStep, applyTranscriptHints, budget, clearPlayback, dietary, findRecommendations, flushToolResults, partySize, play, query, requestLocation, runRecommendationTool, updateQuery]);
+  }, [addBrainStep, applyTranscriptHints, budget, clearPlayback, currentMissingFields, dietary, findRecommendations, flushToolResults, partySize, play, query, requestLocation, runRecommendationTool, updateQuery]);
 
   useEffect(() => () => stop(), [stop]);
   useEffect(() => {

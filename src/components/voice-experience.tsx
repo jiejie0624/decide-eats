@@ -10,7 +10,7 @@ type Budget = "low" | "medium" | "high";
 type AreaSource = "empty" | "browser" | "manual" | "voice";
 type ToolArguments = { query?: string; latitude?: number; longitude?: number; area?: string; budget?: Budget; partySize?: number; dietary?: string; rejectedIds?: string[] };
 type BrainStep = { id: number; label: string; detail: string };
-type ResolvedLocation = { label: string; latitude: number; longitude: number; provider?: string };
+type ResolvedLocation = { label: string; latitude: number; longitude: number; provider?: string; country?: string; countryCode?: string };
 type AgentEvent = {
   type: string;
   text?: string;
@@ -72,6 +72,18 @@ function directionsUrl(place: Recommendation, origin?: string) {
   url.searchParams.set("destination", destination);
   if (origin) url.searchParams.set("origin", origin);
   return url.toString();
+}
+
+function inferCountryCodeFromContext(areaLabel: string, coordinates: { latitude: number; longitude: number } | null) {
+  if (/malaysia|马来西亚|馬來西亞|johor|sarawak|sabah|perak|kuala lumpur/i.test(areaLabel)) return "MY";
+  if (coordinates) {
+    const { latitude, longitude } = coordinates;
+    if (latitude >= 0.8 && latitude <= 7.5 && longitude >= 99.5 && longitude <= 119.5) return "MY";
+    if (latitude >= 1.15 && latitude <= 1.5 && longitude >= 103.55 && longitude <= 104.1) return "SG";
+    if (latitude >= 49 && latitude <= 59 && longitude >= -8 && longitude <= 2) return "GB";
+    if (latitude >= 24 && latitude <= 50 && longitude >= -125 && longitude <= -66) return "US";
+  }
+  return undefined;
 }
 
 function deliverySearchLinks(place: Recommendation, area?: string) {
@@ -412,10 +424,12 @@ export function VoiceExperience() {
     const cleanArea = spokenArea.trim();
     if (!cleanArea) return null;
     try {
+      const contextLabel = areaRef.current.trim();
+      const countryCode = inferCountryCodeFromContext(contextLabel, locationRef.current);
       const response = await fetch("/api/resolve-location", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: cleanArea }),
+        body: JSON.stringify({ query: cleanArea, contextLabel, countryCode }),
       });
       const payload = (await response.json()) as ResolvedLocation | { error?: string };
       if (!response.ok || !("label" in payload)) return null;
@@ -480,6 +494,7 @@ export function VoiceExperience() {
           latitude: latestLocation?.latitude,
           longitude: latestLocation?.longitude,
           area: areaText || userText,
+          countryCode: inferCountryCodeFromContext(areaText, latestLocation ?? locationRef.current),
           budget: latestBudget,
           partySize: latestPartySize,
           dietary: latestDietary || undefined,
@@ -545,6 +560,8 @@ export function VoiceExperience() {
           latitude: args.latitude ?? resolvedSpokenArea?.latitude ?? (spokenArea ? undefined : latestLocation?.latitude),
           longitude: args.longitude ?? resolvedSpokenArea?.longitude ?? (spokenArea ? undefined : latestLocation?.longitude),
           area: nextArea,
+          countryCode: resolvedSpokenArea?.countryCode ?? inferCountryCodeFromContext(nextArea, resolvedSpokenArea ? { latitude: resolvedSpokenArea.latitude, longitude: resolvedSpokenArea.longitude } : latestLocation),
+          country: resolvedSpokenArea?.country,
           budget: nextBudget,
           partySize: nextPartySize,
           dietary: nextDietary,

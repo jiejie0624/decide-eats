@@ -75,7 +75,24 @@ function directionsUrl(place: Recommendation, origin?: string) {
 }
 
 function inferCountryCodeFromContext(areaLabel: string, coordinates: { latitude: number; longitude: number } | null) {
-  if (/malaysia|马来西亚|馬來西亞|johor|sarawak|sabah|perak|kuala lumpur/i.test(areaLabel)) return "MY";
+  const countryPatterns: Array<[string, RegExp]> = [
+    ["MY", /malaysia|马来西亚|馬來西亞|johor|sarawak|sabah|perak|kuala lumpur/i],
+    ["US", /united states|usa|u\.s\.|america|new york|california|texas|florida/i],
+    ["GB", /united kingdom|uk|england|scotland|wales|london/i],
+    ["IN", /india|印度|delhi|mumbai|bangalore|bengaluru|chennai|hyderabad/i],
+    ["SG", /singapore|新加坡/i],
+    ["CN", /china|中国|beijing|北京|shanghai|上海/i],
+    ["JP", /japan|日本|tokyo|東京|osaka|大阪/i],
+    ["KR", /korea|south korea|韩国|韓國|seoul/i],
+    ["TH", /thailand|泰国|泰國|bangkok/i],
+    ["ID", /indonesia|印尼|jakarta|bali/i],
+    ["PH", /philippines|菲律宾|菲律賓|manila/i],
+    ["AU", /australia|澳洲|sydney|melbourne/i],
+    ["CA", /canada|加拿大|toronto|vancouver/i],
+    ["IT", /italy|italia|意大利|rome|milano|milan/i],
+  ];
+  const matched = countryPatterns.find(([, pattern]) => pattern.test(areaLabel));
+  if (matched) return matched[0];
   if (coordinates) {
     const { latitude, longitude } = coordinates;
     if (latitude >= 0.8 && latitude <= 7.5 && longitude >= 99.5 && longitude <= 119.5) return "MY";
@@ -265,6 +282,7 @@ export function VoiceExperience() {
   const areaSourceRef = useRef<AreaSource>("empty");
   const locationStatusRef = useRef<"idle" | "asking" | "ready" | "fallback">("idle");
   const locationRequestAttemptedRef = useRef(false);
+  const countryCodeRef = useRef<string | undefined>(undefined);
   const partySizeKnownRef = useRef(false);
   const budgetKnownRef = useRef(false);
   const dietaryKnownRef = useRef(false);
@@ -372,8 +390,9 @@ export function VoiceExperience() {
   const fillAreaFromCoordinates = useCallback(async (coordinates: { latitude: number; longitude: number }, overwrite = false) => {
     try {
       const response = await fetch(`/api/reverse-geocode?lat=${coordinates.latitude}&lon=${coordinates.longitude}`, { cache: "no-store" });
-      const payload = response.ok ? ((await response.json()) as { label?: string }) : null;
+      const payload = response.ok ? ((await response.json()) as { label?: string; countryCode?: string }) : null;
       const label = payload?.label?.trim();
+      countryCodeRef.current = payload?.countryCode?.trim().toUpperCase() || inferCountryCodeFromContext(label ?? "", coordinates);
       if (!label) return;
       if (!overwrite && (areaSourceRef.current === "manual" || areaSourceRef.current === "voice")) return;
       updateAreaSource("browser");
@@ -425,11 +444,17 @@ export function VoiceExperience() {
     if (!cleanArea) return null;
     try {
       const contextLabel = areaRef.current.trim();
-      const countryCode = inferCountryCodeFromContext(contextLabel, locationRef.current);
+      const contextCoordinates = locationRef.current;
+      const countryCode = countryCodeRef.current ?? inferCountryCodeFromContext(contextLabel, contextCoordinates);
       const response = await fetch("/api/resolve-location", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: cleanArea, contextLabel, countryCode }),
+        body: JSON.stringify({
+          query: cleanArea,
+          countryCode,
+          contextLatitude: contextCoordinates?.latitude,
+          contextLongitude: contextCoordinates?.longitude,
+        }),
       });
       const payload = (await response.json()) as ResolvedLocation | { error?: string };
       if (!response.ok || !("label" in payload)) return null;
@@ -439,6 +464,7 @@ export function VoiceExperience() {
       const coordinates = { latitude: payload.latitude, longitude: payload.longitude };
       locationRef.current = coordinates;
       setLocation(coordinates);
+      countryCodeRef.current = payload.countryCode ?? countryCodeRef.current;
       setLocationStatus("ready");
       locationStatusRef.current = "ready";
       addBrainStep("Location", `Resolved "${cleanArea}" as ${payload.label}.`);
@@ -494,7 +520,7 @@ export function VoiceExperience() {
           latitude: latestLocation?.latitude,
           longitude: latestLocation?.longitude,
           area: areaText || userText,
-          countryCode: inferCountryCodeFromContext(areaText, latestLocation ?? locationRef.current),
+          countryCode: countryCodeRef.current ?? inferCountryCodeFromContext(areaText, latestLocation ?? locationRef.current),
           budget: latestBudget,
           partySize: latestPartySize,
           dietary: latestDietary || undefined,
@@ -551,6 +577,23 @@ export function VoiceExperience() {
     if (args.budget) updateBudget(args.budget);
     if (typeof args.partySize === "number" && Number.isFinite(args.partySize)) updatePartySize(nextPartySize);
     if (typeof args.dietary === "string" && args.dietary.trim()) updateDietary(args.dietary.trim());
+
+    const missingFields = [
+      args.query || queryRef.current.trim() ? "" : "what food or craving the user wants",
+      nextArea.trim() || latestLocation ? "" : "the user's area or location",
+      typeof args.partySize === "number" || partySizeKnownRef.current ? "" : "how many people are eating",
+      args.budget || budgetKnownRef.current ? "" : "the user's budget level: easy, comfortable, or worth it",
+      (typeof args.dietary === "string" && args.dietary.trim()) || dietaryKnownRef.current ? "" : "dietary needs, allergies, or no restrictions",
+    ].filter(Boolean);
+
+    if (missingFields.length > 0) {
+      const error = `Do not search yet. Missing: ${missingFields.join("; ")}. Ask the user for at most two missing items, then call get_recommendation again.`;
+      pendingToolResults.current.push({ call_id: message.call_id, result: { error } });
+      addBrainStep("Tool paused", error);
+      setToolStatus("Need more details before searching.");
+      return;
+    }
+
     try {
       const response = await fetch("/api/recommendation", {
         method: "POST",
@@ -560,7 +603,7 @@ export function VoiceExperience() {
           latitude: args.latitude ?? resolvedSpokenArea?.latitude ?? (spokenArea ? undefined : latestLocation?.latitude),
           longitude: args.longitude ?? resolvedSpokenArea?.longitude ?? (spokenArea ? undefined : latestLocation?.longitude),
           area: nextArea,
-          countryCode: resolvedSpokenArea?.countryCode ?? inferCountryCodeFromContext(nextArea, resolvedSpokenArea ? { latitude: resolvedSpokenArea.latitude, longitude: resolvedSpokenArea.longitude } : latestLocation),
+          countryCode: resolvedSpokenArea?.countryCode ?? countryCodeRef.current ?? inferCountryCodeFromContext(nextArea, resolvedSpokenArea ? { latitude: resolvedSpokenArea.latitude, longitude: resolvedSpokenArea.longitude } : latestLocation),
           country: resolvedSpokenArea?.country,
           budget: nextBudget,
           partySize: nextPartySize,

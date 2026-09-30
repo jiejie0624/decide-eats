@@ -39,19 +39,15 @@ function normalizeQuery(query: string) {
     .trim();
 }
 
-function isMalaysiaContext(countryCode?: string, contextLabel?: string) {
-  return countryCode?.toUpperCase() === "MY" || /malaysia|马来西亚|馬來西亞|johor|sarawak|sabah|perak|kuala lumpur/i.test(contextLabel ?? "");
-}
-
-function repairedQueries(query: string, preferMalaysia: boolean) {
+function repairedQueries(query: string, preferredCountryCode?: string) {
   const normalized = normalizeQuery(query);
   const variants = new Set<string>();
   variants.add(normalized);
   for (const repair of speechRepairs) {
     if (repair.pattern.test(normalized)) variants.add(repair.replacement);
   }
-  if (preferMalaysia && !/malaysia|马来西亚|馬來西亞/i.test(normalized)) {
-    variants.add(`${normalized}, Malaysia`);
+  if (preferredCountryCode) {
+    variants.add(`${normalized}, ${preferredCountryCode}`);
   }
   if (!/\b(city|town|state|country|malaysia|singapore|china|japan|korea|usa|america|uk|australia|canada)\b|中国|日本|韩国|新加坡|马来西亚|馬來西亞/i.test(normalized)) {
     variants.add(`${normalized} city`);
@@ -60,14 +56,14 @@ function repairedQueries(query: string, preferMalaysia: boolean) {
   return Array.from(variants).filter((item) => item.length >= 2).slice(0, 5);
 }
 
-function scoreLabel(label: string, query: string, providerBoost = 0, preferredCountryCode?: string) {
+function scoreLabel(label: string, query: string, providerBoost = 0, preferredCountryCode?: string, candidateCountryCode?: string) {
   const lowerLabel = label.toLowerCase();
   const lowerQuery = query.toLowerCase();
   let score = providerBoost;
   if (lowerLabel.includes(lowerQuery)) score += 8;
   if (/\b(city|town|village|municipality|district|state|province|country)\b/i.test(label)) score += 2;
-  if (preferredCountryCode === "MY" && /malaysia/i.test(label)) score += 12;
-  if (preferredCountryCode === "MY" && /united kingdom|england|london/i.test(label)) score -= 20;
+  if (preferredCountryCode && candidateCountryCode === preferredCountryCode) score += 12;
+  if (preferredCountryCode && candidateCountryCode && candidateCountryCode !== preferredCountryCode) score -= 20;
   if (/\brestaurant|hotel|shop|mall|road|street\b/i.test(label)) score -= 3;
   return score;
 }
@@ -107,7 +103,7 @@ async function resolveWithNominatim(query: string, preferredCountryCode?: string
         provider: "nominatim" as const,
         country: item.address?.country,
         countryCode: item.address?.country_code?.toUpperCase(),
-        score: scoreLabel(item.display_name, query, typeBoost + Math.round((item.importance ?? 0) * 10), preferredCountryCode),
+        score: scoreLabel(item.display_name, query, typeBoost + Math.round((item.importance ?? 0) * 10), preferredCountryCode, item.address?.country_code?.toUpperCase()),
       }];
     });
   } catch {
@@ -115,10 +111,14 @@ async function resolveWithNominatim(query: string, preferredCountryCode?: string
   }
 }
 
-async function resolveWithPhoton(query: string, preferredCountryCode?: string): Promise<LocationCandidate[]> {
+async function resolveWithPhoton(query: string, preferredCountryCode?: string, contextCoordinates?: { latitude: number; longitude: number }): Promise<LocationCandidate[]> {
   const endpoint = new URL("https://photon.komoot.io/api/");
   endpoint.searchParams.set("q", query);
   endpoint.searchParams.set("limit", "5");
+  if (contextCoordinates) {
+    endpoint.searchParams.set("lat", String(contextCoordinates.latitude));
+    endpoint.searchParams.set("lon", String(contextCoordinates.longitude));
+  }
 
   try {
     const response = await fetch(endpoint, { cache: "no-store" });
@@ -140,6 +140,8 @@ async function resolveWithPhoton(query: string, preferredCountryCode?: string): 
       const [longitudeRaw, latitudeRaw] = feature.geometry?.coordinates ?? [];
       const latitude = asCoordinate(latitudeRaw, -90, 90);
       const longitude = asCoordinate(longitudeRaw, -180, 180);
+      const candidateCountryCode = feature.properties?.countrycode?.toUpperCase();
+      if (preferredCountryCode && candidateCountryCode && candidateCountryCode !== preferredCountryCode) return [];
       const label = [feature.properties?.name, feature.properties?.city, feature.properties?.state, feature.properties?.country]
         .filter(Boolean)
         .filter((value, index, values) => values.indexOf(value) === index)
@@ -152,8 +154,8 @@ async function resolveWithPhoton(query: string, preferredCountryCode?: string): 
         longitude,
         provider: "photon" as const,
         country: feature.properties?.country,
-        countryCode: feature.properties?.countrycode?.toUpperCase(),
-        score: scoreLabel(label, query, typeBoost, preferredCountryCode),
+        countryCode: candidateCountryCode,
+        score: scoreLabel(label, query, typeBoost, preferredCountryCode, candidateCountryCode),
       }];
     });
   } catch {
@@ -175,16 +177,17 @@ export async function POST(request: Request) {
   }
 
   const rawQuery = typeof (body as { query?: unknown })?.query === "string" ? (body as { query: string }).query.trim().slice(0, 120) : "";
-  const contextLabel = typeof (body as { contextLabel?: unknown })?.contextLabel === "string" ? (body as { contextLabel: string }).contextLabel.trim().slice(0, 160) : "";
   const countryCode = typeof (body as { countryCode?: unknown })?.countryCode === "string" ? (body as { countryCode: string }).countryCode.trim().slice(0, 2).toUpperCase() : "";
+  const contextLatitude = asCoordinate((body as { contextLatitude?: unknown })?.contextLatitude, -90, 90);
+  const contextLongitude = asCoordinate((body as { contextLongitude?: unknown })?.contextLongitude, -180, 180);
+  const contextCoordinates = contextLatitude !== null && contextLongitude !== null ? { latitude: contextLatitude, longitude: contextLongitude } : undefined;
   if (rawQuery.length < 2) return NextResponse.json({ error: "Location is too short." }, { status: 400 });
 
-  const preferMalaysia = isMalaysiaContext(countryCode, contextLabel);
-  const preferredCountryCode = preferMalaysia ? "MY" : countryCode || undefined;
+  const preferredCountryCode = countryCode || undefined;
   const candidates: LocationCandidate[] = [];
-  for (const query of repairedQueries(rawQuery, preferMalaysia)) {
+  for (const query of repairedQueries(rawQuery, preferredCountryCode)) {
     candidates.push(...(await resolveWithNominatim(query, preferredCountryCode)));
-    candidates.push(...(await resolveWithPhoton(query, preferredCountryCode)));
+    candidates.push(...(await resolveWithPhoton(query, preferredCountryCode, contextCoordinates)));
     if (candidates.some((candidate) => candidate.score >= 12)) break;
   }
 

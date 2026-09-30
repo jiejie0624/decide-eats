@@ -44,7 +44,11 @@ export async function GET(request: Request) {
     }
     const payload = (await response.json()) as { display_name?: string; address?: Record<string, string> };
     const compact = compactLocationLabel(payload.address);
-    return NextResponse.json({ label: compact || payload.display_name || `${latitude.toFixed(5)}, ${longitude.toFixed(5)}` });
+    return NextResponse.json({
+      label: compact || payload.display_name || `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`,
+      country: payload.address?.country,
+      countryCode: payload.address?.country_code?.toUpperCase(),
+    });
   } catch {
     return NextResponse.json({ label: `${latitude.toFixed(5)}, ${longitude.toFixed(5)}` });
   }

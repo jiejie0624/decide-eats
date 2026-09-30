@@ -553,6 +553,14 @@ export function VoiceExperience() {
     setToolStatus("Voice agent is searching restaurants...");
     const args = readToolArguments(message.arguments);
     addBrainStep("Tool call", `get_recommendation ${JSON.stringify(args).slice(0, 140)}`);
+    const sendToolResult = (result: RecommendationResponse | { error: string }) => {
+      const socket = ws.current;
+      if (socket?.readyState === WebSocket.OPEN && message.call_id) {
+        socket.send(JSON.stringify({ type: "tool.result", call_id: message.call_id, result: JSON.stringify(result) }));
+      } else if (message.call_id) {
+        pendingToolResults.current.push({ call_id: message.call_id, result });
+      }
+    };
     const latestLocation = locationRef.current;
     const spokenArea = typeof args.area === "string" ? args.area.trim() : "";
     const currentArea = areaRef.current.trim();
@@ -589,7 +597,7 @@ export function VoiceExperience() {
 
     if (missingFields.length > 0) {
       const error = `Do not search yet. Missing: ${missingFields.join("; ")}. Ask the user for at most two missing items, then call get_recommendation again.`;
-      pendingToolResults.current.push({ call_id: message.call_id, result: { error } });
+      sendToolResult({ error });
       addBrainStep("Tool paused", error);
       setToolStatus("Need more details before searching.");
       return;
@@ -614,7 +622,7 @@ export function VoiceExperience() {
       });
       const payload = (await response.json()) as RecommendationResponse | { error?: string };
       const result: RecommendationResponse | { error: string } = response.ok && isRecommendationResponse(payload) ? payload : { error: "Unable to search restaurants." };
-      pendingToolResults.current.push({ call_id: message.call_id, result });
+      sendToolResult(result);
       if ("recommendations" in result) {
         setRecommendations(result.recommendations);
         setDecision(result.decision ?? result.recommendations[0] ?? null);
@@ -626,7 +634,7 @@ export function VoiceExperience() {
         setDeliveryOpen(false);
       }
     } catch {
-      pendingToolResults.current.push({ call_id: message.call_id, result: { error: "Restaurant search is unavailable." } });
+      sendToolResult({ error: "Restaurant search is unavailable." });
       addBrainStep("Tool error", "Restaurant search was unavailable, so the agent used the safe fallback path.");
     } finally {
       setToolStatus("Search result ready for the voice agent.");
